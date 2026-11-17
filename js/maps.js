@@ -91,15 +91,14 @@
   Object.assign(CM.DATA, MAPS.gz.data);
   for (const k of CFG_KEYS) if (k !== 'START') CFG[k] = MAPS.gz.cfg[k];
   // 地图范围扩展的存档迁移（地图版本升级）：spec = { from, dx, dy, oldW, oldH, oldRegionIds, oldLandmarkIds, note }。
-  // dx / dy 为新格网中原地图左上角的位置（格，须为交通小区边长 4 的倍数，投影系数不变）。只改解析出的存档副本：
+  // dx / dy 为新格网中原地图左上角的位置（格，投影系数不变）。只改解析出的存档副本：
   //  · 城市逐格数据放入新格网对应位置，新增范围标记为待生成（载入时按存档年份生成，见 City.fillNewCells）；
   //  · 区域与地标状态改为按 id 对应（存档没有 id 时用旧版本的 id 列表补上）；
   //  · 车站、轨道控制点、任务锚点平移；片区编号（动态任务与冷却记录）按新格网换算；
   //  · 城市经济在载入后按新增范围的岗位比例调整统计口径（见 game.js），资金、债务、任务、历史记录保持不变。
   // spec 也可以是按版本排列的数组（v2.2：香港第 2 版再向西扩大为第 3 版），旧存档依次迁移；每步的新格网尺寸为 newW / newH，缺省为当前地图尺寸
   CM.extentMigration = function (specs) {
-    const ZN = CFG.ZONE, list = (Array.isArray(specs) ? specs : [specs]).slice().sort(function (a, b) { return a.from - b.from; });
-    for (const spec of list) if (spec.dx % ZN || spec.dy % ZN) throw new Error('地图扩展偏移须为交通小区边长的倍数');
+    const list = (Array.isArray(specs) ? specs : [specs]).slice().sort(function (a, b) { return a.from - b.from; });
     return function (p, from) {
       const steps = list.filter(function (s) { return s.from >= from; });
       if (!steps.length || steps[0].from !== from) throw new Error('不支持从第 ' + from + ' 版迁移');
@@ -108,7 +107,7 @@
     };
   };
   function migrateStep(p, spec, from0) {
-    const ZN = CFG.ZONE, from = spec.from;
+    const oldZone = spec.oldZone || GZ_CFG.ZONE, newZone = spec.newZone || GZ_CFG.ZONE, from = spec.from;
     {
       const m = MAPS[p.meta.map || 'gz'], W = spec.newW || m.cfg.W, H = spec.newH || m.cfg.H, oW = spec.oldW, oH = spec.oldH, dx = spec.dx, dy = spec.dy;
       if (dx < 0 || dy < 0 || dx + oW > W || dy + oH > H) throw new Error('新旧格网尺寸不匹配');
@@ -137,11 +136,22 @@
         for (const id in net.segments) { const s = net.segments[id]; if (s.pts) s.pts = s.pts.map(function (q) { return [q[0] + dx, q[1] + dy]; }); }
       }
       // 片区编号
-      const oZW = oW / ZN, nZW = W / ZN, zmap = function (z) { return ((z / oZW) | 0) * nZW + (z % oZW) + dx / ZN + (dy / ZN) * nZW; };
+      const oZW = oW / oldZone, nZW = W / newZone;
+      const zmap = function (z) {
+        const x = (z % oZW + 0.5) * oldZone + dx, y = (Math.floor(z / oZW) + 0.5) * oldZone + dy;
+        return Math.floor(y / newZone) * nZW + Math.floor(x / newZone);
+      };
       const fixTask = function (t) { if (!t) return; if (t.anchors) t.anchors.forEach(sh); if (typeof t.zone === 'number') t.zone = zmap(t.zone); if (typeof t.coolKey === 'string') t.coolKey = t.coolKey.replace(/^(cong|cov):(\d+)$/, function (s0, a, z) { return a + ':' + zmap(+z); }); };
       const T = p.tasks;
       for (const list of [T.active, T.done, T.failed]) (list || []).forEach(fixTask);
-      if (T.cool) { const nc = {}; for (const k in T.cool) nc[k.replace(/^(cong|cov):(\d+)$/, function (s0, a, z) { return a + ':' + zmap(+z); })] = T.cool[k]; T.cool = nc; }
+      if (T.cool) {
+        const nc = {};
+        for (const k in T.cool) {
+          const key = k.replace(/^(cong|cov):(\d+)$/, function (s0, a, z) { return a + ':' + zmap(+z); });
+          nc[key] = nc[key] === undefined ? T.cool[k] : Math.max(nc[key], T.cool[k]);
+        }
+        T.cool = nc;
+      }
       // 城市经济：载入后按新增范围调整统计口径（连续迁移时原范围随后续步骤平移）
       if (p.macro) { const ar = p.macro.areaRebase; if (ar && ar.oldBox && from > from0) { ar.oldBox[0] += dx; ar.oldBox[1] += dy; } else p.macro.areaRebase = { from: from, oldBox: [dx, dy, oW, oH] }; }
       const prevNote = p.mapUpgrade && from > from0 ? p.mapUpgrade.note : '';

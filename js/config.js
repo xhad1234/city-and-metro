@@ -3,8 +3,8 @@
 (function (CM) {
   CM.CFG = {
     GAME_VERSION: '2.7.2',
-    TRAFFIC_MODEL: 5,      // 枢纽接驳与站内换乘更新，旧交通缓存需要重算。
-    RULES_REVISION: 12,    // 合同金额精度与交通新规，升级前保留原存档备份。
+    TRAFFIC_MODEL: 6,      // 加入自行车接驳，旧交通缓存需要重算。
+    RULES_REVISION: 13,    // 升级前保留原存档备份。
     SAVE_FORMAT: 'city-metro-save',
     SAVE_VERSION: 2,
     SAVE_MIN_VERSION: 2,   // 1.1 起地图改为真实地理，旧版存档的城市数据与之不兼容
@@ -82,6 +82,11 @@
       maxAccessM: 1125,         // 进出站最大步行距离（15 分钟）DEFAULT
       transferMaxM: 500,        // 站外换乘最大步行距离 DEFAULT
       cellExtraM: 60,           // 街道到建筑的平均附加距离
+    },
+    bike: {
+      speedRatio: 3,         // 相对步行速度，共用可通行的地面街道
+      transferMin: 4,        // 每段骑行接驳计入取车/停车与进出站时间
+      maxRideMin: 15,
     },
 
     metro: {

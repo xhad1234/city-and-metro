@@ -683,7 +683,7 @@
   };
   Renderer.prototype.zoomAt = function (sx, sy, factor) {
     const c = this.cam;
-    c.tz = U.clamp(c.tz * factor, 5, 96);
+    c.tz = U.clamp(c.tz * factor, Math.min(5, this.fitZoom()), 96);
     const w = this.unproject(sx, sy);
     c.anchor = { sx: sx, sy: sy, wx: w.x, wy: w.y };
     c.fly = null;
@@ -5461,8 +5461,11 @@
     for (const L of arr) { const d = U.distToPoly(wx, wy, L.pts); if (d < bd) { bd = d; best = L; } }
     return best;
   };
+  Renderer.prototype.fitZoom = function () {
+    return Math.max(0.25, Math.min(this.w / (CFG.W + 4), this.h / (CFG.H + 4)));
+  };
   Renderer.prototype.fitAllSmooth = function () {
-    const z = U.clamp(Math.min(this.w / (CFG.W + 4), this.h / (CFG.H + 4)) * 1.05, 5, 96);
+    const z = Math.min(96, this.fitZoom());
     this.flyTo(CFG.W / 2, CFG.H / 2, z); this.cam.fly.duration = 0.9;
   };
   CM.RENDER_CONST = { EX: EX, HSF: HSF, ISO: ISO, UNDER_DEPTH: UNDER_DEPTH };

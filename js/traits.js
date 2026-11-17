@@ -274,6 +274,8 @@
       if (t.existing && t.use !== 'transition') continue;
       def.build(t, c);
     }
+    // 新增的历史事件排在已有规则生成的事件后面，保留旧存档中的事件编号。
+    if (c.D.laterEvents) c.D.events.push(...c.D.laterEvents);
   };
   // 校验（scripts/prepare-game.mjs 调用）：片区与地标存在、事件与日期有效、招牌不超过 3 项、有史实依据
   const validate = function (m) {

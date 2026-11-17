@@ -642,7 +642,7 @@
         if (onRoad > 0) { carDem[pi] += onRoad / occ * roadF; hasCar[ho] = 1; }
         S[0] += F; S[1] += metro; S[2] += car;
         const tCar = bgShare > 0 ? (1 - bgShare) * (ct + carAccess * 0.5) + bgShare * tBg : ct + carAccess * 0.5;
-        const mW = metro - fM;   // 步行进站的地铁出行（其余为打车 / 公交接驳的枢纽旅客）
+        const mW = metro - fM;   // 步行或骑车接驳地铁的出行（其余为打车 / 公交接驳的枢纽旅客）
         S[3] += car * tCar + mW * mTime + fM * fTime;
         S[4] += car * tCar; S[5] += mW * mTime + fM * fTime;
         S[6] += mW * fare + fM * fFare; S[7] += mW * mKm + fM * fKm; S[8] += car * ck; S[9] += onRoad / occ * ck * roadF;
@@ -1262,15 +1262,18 @@
       if(best>limit)continue;const path=[];let v=end,guard=0;while(v>=0&&guard++<city.V){path.push([city.vx[v],city.vy[v]]);v=tree.pred.get(v)??-1;}path.reverse();path.unshift([from.x,from.y]);path.push([s.x,s.y]);links.push({station:s.id,metres:best,path});
     }return links;
   };
-  // 小区与重要设施节点的接驳表：可步行到达的车站（最多 ACC_MAX 个，v2.9 由 4 个增至 6 个）、覆盖比例与平均步行时间
+  // 小区按步行或骑车接驳，重要设施按步行接驳。步行覆盖和站外换乘仍按步行距离计算。
   const ACC_MAX = 6;   // 接驳组合缓存按每端 3 位编码（a << 3 | b），不能超过 8
   // 分步执行（v2.5 性能）：月结时每处理一批车站让出主线程；结果与一次算完相同
   Model.prototype.computeAccess = function (C) { const it = this.computeAccessGen(C); let r = it.next(); while (!r.done) r = it.next(); return r.value; };
   Model.prototype.computeAccessGen = function* (C) {
     const city = this.city, walk = city.walk, VW = city.VW, N = C.stations.length;
     const maxM = CFG.walk.maxAccessM, xferM = CFG.walk.transferMaxM, extra = CFG.walk.cellExtraM, mpm = CFG.walk.mPerMin;
+    const bike = CFG.bike, bikeSpeed = mpm * bike.speedRatio, bikeM = bikeSpeed * bike.maxRideMin;
+    const accessRadius = Math.ceil(Math.max(maxM, bikeM) / CFG.CELL_M) + 1;
     const nC = city.N, Z = this.Z, fn = this.fn, F = fn ? fn.F : 0, NZ = Z + F;
     const cellWalk = new Float32Array(nC).fill(Infinity), cellStation = new Int32Array(nC).fill(-1);
+    const cellAccess = new Uint8Array(nC);
     const dist = this._wdist || (this._wdist = new Float64Array(city.V).fill(INF));
     if (dist.length !== city.V) { this._wdist = new Float64Array(city.V).fill(INF); }
     const D_ = this._wdist;
@@ -1280,8 +1283,9 @@
     const zMap = new Map(), fMap = new Map(), eMap = new Map();
     const cellFac = fn ? fn.cellFac : null, ringFac = fn ? fn.ringFac : null;
     const trees = [], accessible = new Uint8Array(N), catchPop = new Float32Array(N), transfers = [];
-    const limit = Math.max(maxM, xferM) + 200;
-    const treeRules = maxM + ':' + xferM + ':' + CFG.CELL_M;
+    const walkLimit = Math.max(maxM, xferM) + 200;
+    const limit = Math.max(walkLimit, bikeM);
+    const treeRules = walkLimit + ':' + limit + ':' + CFG.CELL_M;
     if (this._treeWalk !== walk || this._treeRules !== treeRules) { this._treeWalk = walk; this._treeRules = treeRules; this._walkTrees = new Map(); }
     const treeCache = this._walkTrees;
     for (let k = 0; k < N; k++) {
@@ -1296,7 +1300,7 @@
       const cachedTree = treeCache.get(treeKey);
       if (cachedTree) {
         trees[k] = cachedTree.tree; accessible[k] = 1;
-        for (let q = 0; q < cachedTree.tree.verts.length; q++) { const v = cachedTree.tree.verts[q]; touched.push(v); D_[v] = cachedTree.exact[q]; }
+        for (let q = 0; q < cachedTree.verts.length; q++) { const v = cachedTree.verts[q]; touched.push(v); D_[v] = cachedTree.exact[q]; }
       } else {
         const corners = [cj * VW + ci, cj * VW + ci + 1, (cj + 1) * VW + ci, (cj + 1) * VW + ci + 1];
         for (const v of corners) {
@@ -1330,36 +1334,43 @@
           }
         }
         // 行人路径树（未通车站也保留，用于详情中的“接入线路后的潜在覆盖”）
-        const tv = Int32Array.from(touched), td = new Float32Array(tv.length), tp = new Int32Array(tv.length);
-        for (let q = 0; q < tv.length; q++) { td[q] = D_[tv[q]]; tp[q] = pred[tv[q]]; }
-        trees[k] = { verts: tv, dist: td, pred: tp };
-        const exact = new Float64Array(tv.length);
-        for (let q = 0; q < tv.length; q++) exact[q] = D_[tv[q]];
+        const wv = Int32Array.from(touched.filter(v => D_[v] <= walkLimit));
+        trees[k] = { verts: wv, dist: Float32Array.from(wv, v => D_[v]), pred: Int32Array.from(wv, v => pred[v]) };
         // 上限须高于大型线网的车站数（v2.3）：原先 512，六百多座车站时每次改线都清空重算全部步行树
         if (treeCache.size >= Math.max(2048, N * 2)) treeCache.clear();
-        treeCache.set(treeKey, { tree: trees[k], exact: exact });
+        treeCache.set(treeKey, { tree: trees[k], verts: Int32Array.from(touched), exact: Float64Array.from(touched, v => D_[v]) });
       }
       // 只有接入运营线路的车站提供服务：未通车站不计覆盖、不参与接驳与站外换乘
       if (C.serviced && !C.serviced[k]) { for (const v of touched) D_[v] = INF; continue; }
       // 覆盖格
-      for (let j = Math.max(0, cj - 6); j <= Math.min(city.H - 1, cj + 6); j++) {
-        for (let i = Math.max(0, ci - 6); i <= Math.min(city.W - 1, ci + 6); i++) {
+      for (let j = Math.max(0, cj - accessRadius); j <= Math.min(city.H - 1, cj + accessRadius); j++) {
+        for (let i = Math.max(0, ci - accessRadius); i <= Math.min(city.W - 1, ci + accessRadius); i++) {
           const v0 = j * VW + i;
           const cd = Math.min(D_[v0], D_[v0 + 1], D_[v0 + VW], D_[v0 + VW + 1]) + extra;
-          if (cd > maxM) continue;
+          if (cd > maxM && cd > bikeM) continue;
           const c = j * city.W + i;
-          if (cd < cellWalk[c]) { cellWalk[c] = cd; cellStation[c] = k; }
-          // 重要设施的场地格：按格计（设施本身可能没有居住人口）
-          const fl = cellFac && cellFac.get(c);
-          if (fl) for (const f of fl) { let m = fMap.get(f); if (!m) { m = new Map(); fMap.set(f, m); } const e = m.get(k) || [0, 0]; e[0] += 1; e[1] += cd; m.set(k, e); }
-          const rl = ringFac && ringFac.get(c);
-          if (rl) for (const f of rl) { let m = eMap.get(f); if (!m) { m = new Map(); eMap.set(f, m); } const d0 = m.get(k); if (d0 === undefined || cd < d0) m.set(k, cd); }
+          if (cd <= maxM) {
+            if (cd < cellWalk[c]) { cellWalk[c] = cd; cellStation[c] = k; }
+            // 重要设施的场地格：按格计（设施本身可能没有居住人口）
+            const fl = cellFac && cellFac.get(c);
+            if (fl) for (const f of fl) { let m = fMap.get(f); if (!m) { m = new Map(); fMap.set(f, m); } const e = m.get(k) || [0, 0]; e[0] += 1; e[1] += cd; m.set(k, e); }
+            const rl = ringFac && ringFac.get(c);
+            if (rl) for (const f of rl) { let m = eMap.get(f); if (!m) { m = new Map(); eMap.set(f, m); } const d0 = m.get(k); if (d0 === undefined || cd < d0) m.set(k, cd); }
+          }
           const w = city.pop[c] + city.jobs[c];
           if (w <= 0) continue;
           if (cd <= 750) catchPop[k] += city.pop[c] + city.jobs[c];
           const z = city.zoneOf(c);
           let m = zMap.get(z); if (!m) { m = new Map(); zMap.set(z, m); }
-          const e = m.get(k) || [0, 0]; e[0] += w; e[1] += w * cd; m.set(k, e);
+          const walkMin = cd <= maxM ? cd / mpm : Infinity;
+          const bikeMin = cd <= bikeM ? cd / bikeSpeed + bike.transferMin : Infinity;
+          const e = m.get(k) || [0, 0, 0, 0];
+          e[0] += w;
+          e[1] += w * Math.min(walkMin, bikeMin);
+          if (bikeMin < walkMin) e[2] += w;
+          if (cd <= maxM) e[3] += w;
+          m.set(k, e);
+          cellAccess[c] = 1;
         }
       }
       // 站外换乘
@@ -1382,19 +1393,22 @@
     yield;
     // 小区接驳表（下标 0…Z−1 为小区，Z…Z+F−1 为重要设施）
     const zl = new Array(NZ).fill(null), zCov = new Float32Array(NZ), zWalk = new Float32Array(NZ), zTot = new Float64Array(Z);
+    const zWalkCov = new Float32Array(Z);
     for (let z = 0; z < Z; z++) {
-      let tot = 0, cov = 0, wsum = 0;
+      let tot = 0, cov = 0, walkCov = 0, wsum = 0;
       for (const c of this.zoneCells[z]) {
         const w = city.pop[c] + city.jobs[c];
         tot += w;
-        if (cellWalk[c] <= maxM) { cov += w; wsum += w * cellWalk[c]; }
+        if (cellAccess[c]) cov += w;
+        if (cellWalk[c] <= maxM) { walkCov += w; wsum += w * cellWalk[c]; }
       }
       zCov[z] = tot > 0 ? cov / tot : 0; zTot[z] = tot;
-      zWalk[z] = cov > 0 ? wsum / cov / mpm : 0;
+      zWalkCov[z] = tot > 0 ? walkCov / tot : 0;
+      zWalk[z] = walkCov > 0 ? wsum / walkCov / mpm : 0;
       const m = zMap.get(z);
       if (m && zCov[z] > 0) {
         const arr = [];
-        m.forEach(function (e, s) { arr.push({ s: s, w: e[1] / e[0] / mpm, share: e[0] / Math.max(1, tot) }); });
+        m.forEach(function (e, s) { arr.push({ s: s, w: e[1] / e[0], share: e[0] / Math.max(1, tot), bikeShare: e[2] / e[0], walkable: e[3] > 0 }); });
         arr.sort(function (a, b) { return a.w - b.w; });
         zl[z] = arr.slice(0, ACC_MAX);
       }
@@ -1404,14 +1418,15 @@
     {
       const cnt = new Uint16Array(N), best = new Array(N).fill(null);
       for (let z = 0; z < Z; z++) if (zl[z]) for (const e of zl[z]) cnt[e.s]++;
-      zMap.forEach(function (m, z) { if (z >= Z || !zl[z]) return; m.forEach(function (e, s) { if (!cnt[s] && (!best[s] || e[0] > best[s].w)) best[s] = { z: z, w: e[0], d: e[1] / e[0] }; }); });
+      zMap.forEach(function (m, z) { if (z >= Z || !zl[z]) return; m.forEach(function (e, s) { if (!cnt[s] && (!best[s] || e[0] > best[s].entry[0])) best[s] = { z: z, entry: e }; }); });
       for (let s2 = 0; s2 < N; s2++) {
         const b = best[s2]; if (!b || cnt[s2] || (C.serviced && !C.serviced[s2])) continue;
         const L = zl[b.z]; let j = L.length;
         if (j >= ACC_MAX) { j = -1; for (let q = L.length - 1; q >= 0; q--) if (cnt[L[q].s] > 1) { j = q; break; } }   // 只替换在别处也有的车站
         if (j < 0) continue;
         if (j < L.length) cnt[L[j].s]--;
-        L[j] = { s: s2, w: b.d / mpm, share: b.w / Math.max(1, zTot[b.z]) };
+        const e = b.entry;
+        L[j] = { s: s2, w: e[1] / e[0], share: e[0] / Math.max(1, zTot[b.z]), bikeShare: e[2] / e[0], walkable: e[3] > 0 };
         L.sort(function (x, y) { return x.w - y.w; });
         cnt[s2] = 1;
       }
@@ -1493,7 +1508,7 @@
       }
     }
     for (let c = 0; c < nC; c++) { pt += city.pop[c]; if (cellWalk[c] <= maxM) pc += city.pop[c]; }
-    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalk: zWalk, trees: trees, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: pt > 0 ? pc / pt : 0, zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
+    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalkCov: zWalkCov, zWalk: zWalk, trees: trees, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: pt > 0 ? pc / pt : 0, zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
   };
 
   Model.prototype.buildMetro = function (C, acc0) {
@@ -1665,9 +1680,9 @@
   Model.prototype.setHabit = function (ageOf) {
     const Z = this.Z, net = this.net, acc = net && net.acc, H = CFG.habit, out = new Float32Array(Z);
     if (acc && H && acc.zl && acc.zCov) for (let z = 0; z < Z; z++) {
-      const L = acc.zl[z], cov = acc.zCov[z] || 0;
+      const L = acc.zl[z], cov = (acc.zWalkCov || acc.zCov)[z] || 0;
       if (!L || !L.length || cov <= 0) continue;
-      let age = 0; for (const a of L) { const v = ageOf(net.C, a.s); if (v > age) age = v; }
+      let age = 0; for (const a of L) if (a.walkable !== false) { const v = ageOf(net.C, a.s); if (v > age) age = v; }
       const x = U.clamp(age / H.years, 0, 1); out[z] = Math.min(1, cov) * (1 - (1 - x) * (1 - x));
     }
     let same = !!this.habit && this.habit.length === Z;

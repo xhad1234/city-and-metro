@@ -871,7 +871,7 @@
   };
   UI.prototype.showPhaseBanner = function (er) {
     const self = this, E = CM.Eras; if (!E || !er || !er.era) return;
-    const L = E.list(), k = L.indexOf(er.era), e = er.era, to = E.endOf(k);
+    const L = E.list(), k = L.indexOf(er.era), e = er.era;
     for (const old of this.histHost.querySelectorAll('.phase-banner')) old.remove();
     // 展望：背景中「估算 / 模拟」的第一句；上一阶段的结果：人口、岗位、新开发用地与地铁
     const en = CM.I18n && CM.I18n.get() === 'en';
@@ -890,7 +890,7 @@
       h('span', { class: 'pb-line' }),
       h('div', { class: 'pb-num' }, h('b', null, String(k + 1)), h('small', null, '/ ' + L.length)),
       h('div', { class: 'pb-body' },
-        h('div', { class: 'pb-kick' }, h('span', null, '号外 · 新的发展阶段 · ' + e.from + (to ? '–' + to : ' 年起')), h('span', { class: 'pb-tag' }, e.tag)),
+        h('div', { class: 'pb-kick' }, h('span', null, '号外 · 新的发展阶段 · ' + E.rangeLabel(k)), h('span', { class: 'pb-tag' }, e.tag)),
         h('div', { class: 'pb-title' }, e.name),
         outlook ? h('div', { class: 'pb-sub' }, en ? outlook.charAt(0).toUpperCase() + outlook.slice(1) + '.' : outlook + '。') : null,
         prev ? h('div', { class: 'pb-prev' }, ic('chart', 13), h('span', null, prev)) : null,

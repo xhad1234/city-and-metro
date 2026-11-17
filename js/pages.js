@@ -1267,7 +1267,7 @@
     const tl = h('div', { class: 'era-tl' });
     L.forEach(function (e, i) {
       const a = e.from, b = i + 1 < L.length ? L[i + 1].from : y1;
-      tl.appendChild(h('div', { class: 'era-seg' + (i === k ? ' cur' : '') + (i < k ? ' past' : ''), style: { flexGrow: String(Math.max(0.6, b - a)), '--sc': col(i) }, 'data-tip': e.name + ' · ' + a + (i + 1 < L.length ? '–' + b : ' 年起') },
+      tl.appendChild(h('div', { class: 'era-seg' + (i === k ? ' cur' : '') + (i < k ? ' past' : ''), style: { flexGrow: String(Math.max(0.6, b - a)), '--sc': col(i) }, 'data-tip': e.name + ' · ' + E.rangeLabel(i) },
         h('i'), h('span', null, e.name)));
     });
     const mk = h('div', { class: 'era-now', style: { left: (U.clamp((t - y0) / (y1 - y0), 0, 1) * 100) + '%' } });
@@ -1275,7 +1275,7 @@
     // 当前阶段：名称、年份、标签与阶段内进度；背景分「史实 / 估算 / 模拟 / 虚构」
     const e = v.era, to = v.to || e.from + 15, frac = U.clamp((t - e.from) / Math.max(0.5, to - e.from), 0, 1);
     const hero = h('div', { class: 'era-hero' },
-      h('div', { class: 'row between' }, h('div', null, h('div', { class: 'tiny', style: { opacity: 0.85 } }, '第 ' + (k + 1) + ' / ' + L.length + ' 阶段 · ' + e.from + (v.to ? '–' + v.to : ' 年起')), h('div', { class: 'era-name' }, e.name)), h('span', { class: 'era-tag' }, e.tag)),
+      h('div', { class: 'row between' }, h('div', null, h('div', { class: 'tiny', style: { opacity: 0.85 } }, '第 ' + (k + 1) + ' / ' + L.length + ' 阶段 · ' + E.rangeLabel(k)), h('div', { class: 'era-name' }, e.name)), h('span', { class: 'era-tag' }, e.tag)),
       h('div', { class: 'era-bar' }, h('i', { style: { width: Math.round(frac * 100) + '%' } })),
       v.trans ? h('div', { class: 'tiny', style: { opacity: 0.9, marginTop: '6px' } }, v.trans.next ? '正在逐步过渡到「' + v.trans.era.name + '」。' : '上一阶段「' + v.trans.era.name + '」的影响正在逐步减弱。') : null);
     el.appendChild(hero);

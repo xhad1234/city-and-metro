@@ -14,7 +14,7 @@
       chip.classList.remove('gone');
       chip.style.setProperty('--ec', UI.ERA_COLORS[k % UI.ERA_COLORS.length]);
       chip.querySelector('.v').textContent = e.name;
-      chip.querySelector('.k').textContent = e.from + (E.endOf(k) ? '–' + E.endOf(k) : ' 年起');
+      chip.querySelector('.k').textContent = E.rangeLabel(k);
       chip.setAttribute('data-tip', '发展阶段：' + e.name + ' · 点击查看本阶段的城市变化');
       if (CM.I18n) CM.I18n.localize(chip);
     }

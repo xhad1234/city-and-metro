@@ -203,13 +203,13 @@
   };
   // 经济事件：记入城市纪事的事件列表（史实 / 模拟），说明本城受影响的程度
   Game.prototype.logEra = function (er, toast) {
-    const E = CM.Eras, e = er.era, to = E.endOf(E.list().indexOf(e));
+    const E = CM.Eras, e = er.era;
     if (er.prev && er.prev.text) {
       const pe = E.byId(er.prev.id);
       this.logEvent({ tag: '阶段总结', title: '阶段总结：' + (pe ? pe.name : er.prev.id), desc: er.prev.text });
       if (CM.Milestones) CM.Milestones.onEra(this, pe, er.prev, 'end');
     }
-    this.logEvent({ tag: e.tag || '史实', title: '进入发展阶段：' + e.name + '（' + e.from + (to ? '–' + to : ' 年起') + '）', desc: e.summary || '' });
+    this.logEvent({ tag: e.tag || '史实', title: '进入发展阶段：' + e.name + '（' + E.rangeLabel(E.list().indexOf(e)) + '）', desc: e.summary || '' });
     if (CM.Milestones) CM.Milestones.onEra(this, e, null, 'start');
     if (toast) this.emit('era', er);   // 阶段横幅（界面显示；跳月期间待结束后显示）
   };
@@ -427,7 +427,7 @@
       if (byYear || early) {
         city.openRegion(k, y, m); regionOpened = true;
         const why = byYear ? '参考 ' + rg.open + ' 年开放' : '城市人口增长，提前开放（参考 ' + rg.open + ' 年）';
-        this.logEvent({ tag: byYear ? '史实' : '模拟', title: '新区域开放：' + rg.name, desc: why + (rg.note ? '。' + rg.note : '') + city.openNote(k) });
+        this.logEvent({ tag: byYear ? (rg.tag || '史实') : '模拟', title: '新区域开放：' + rg.name, desc: why + (rg.note ? '。' + rg.note : '') + city.openNote(k) });
         this.emit('toast', { kind: 'info', text: '新区域开放：' + rg.name });
       }
     }

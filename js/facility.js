@@ -40,7 +40,8 @@
     if (f._portal && f._portalW === CM.CFG.W) return f._portal;
     // 城市连接的接驳口（v2.7）：边境在地图中间，接驳口就在设施自己的位置
     if (f.ext.gate) { f._portal = { x: f.x, y: f.y, ex: f.x, ey: f.y }; f._portalW = CM.CFG.W; return f._portal; }
-    const v = f.ext.v, s = Fac.edgeDist(f.x, f.y, v), ex = f.x + v[0] * s, ey = f.y + v[1] * s;
+    const v = f.ext.v, s = Fac.edgeDist(f.x, f.y, v), edge = f.ext.edge;
+    const ex = edge ? edge[0] : f.x + v[0] * s, ey = edge ? edge[1] : f.y + v[1] * s;
     f._portal = { x: ex - v[0] * 0.1, y: ey - v[1] * 0.1, ex: ex, ey: ey }; f._portalW = CM.CFG.W;
     return f._portal;
   };
@@ -89,7 +90,11 @@
     (C._ext || (C._ext = new Map())).set(f.id, r);
     return r;
   };
-  Fac.extText = function (f) { return !f.ext ? '' : f.ext.gate ? '通往' + (f.ext.to || '对岸') : '在地图' + (EXT_NAME[f.ext.dir] || '') + '侧外约 ' + f.ext.km + ' km'; };
+  Fac.extText = function (f) {
+    if (!f.ext) return '';
+    if (f.ext.gate) return '通往' + (f.ext.to || '对岸');
+    return (f.ext.edge ? '距接驳口向' + (EXT_NAME[f.ext.dir] || '') + '约 ' : '在地图' + (EXT_NAME[f.ext.dir] || '') + '侧外约 ') + f.ext.km + ' km';
+  };
   const yrOf = function (v) { return v == null ? null : (Array.isArray(v) ? v[0] + ((v[1] || 1) - 1) / 12 : v); };
   const curve = function (v) { return typeof v === 'number' ? [[0, v]] : v; };
 
@@ -118,7 +123,7 @@
       const T = TYPES[s.t]; if (!T) return;
       const f = { k: out.length, id: s.id || ('f' + i), name: s.n, label: s.label || s.n, t: s.t, T: T, x: 0, y: 0, r: s.r != null ? s.r : T.r, lmK: -1,
         open: null, close: yrOf(s.y1), w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
-        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null } : null, rw: s.rw || null, noModel: !!s.noModel };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
+        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null } : null, rw: s.rw || null, noModel: !!s.noModel };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });
         if (k < 0) return;

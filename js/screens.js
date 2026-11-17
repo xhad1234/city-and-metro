@@ -107,7 +107,9 @@
         btn('power', '退出', function () { self.quitGame(); })),
       CM.MAPS.tutorial ? h('button', { class: 'start-learn', onclick: function () { self.showMapSelect('tutorial'); } }, ic('help', 16), h('span', null, '第一次玩？先试试'), h('b', null, '新手教程 · 青湾'), ic('chev', 14)) : null,
       !storageOk ? h('div', { class: 'callout bad', style: { marginTop: '14px' } }, ic('error'), h('div', { class: 'ct' }, '当前浏览器禁止本地存储，进度将无法自动保存。')) : null,
-      h('div', { class: 'start-foot' }, '规划地铁、改变出行、塑造城市。', h('br'),
+      h('div', { class: 'start-foot' }, h('b', null, '上海社区修改版'), ' · ',
+        h('a', { href: 'https://city-and-metro.pages.dev/', target: '_blank', rel: 'noopener' }, '原版游戏'), ' · ',
+        h('a', { href: 'https://github.com/VinsonFung/city-and-metro', target: '_blank', rel: 'noopener' }, '原始仓库'), h('br'),
         h('a', { href: 'LICENSE.txt', target: '_blank', rel: 'noopener' }, '© 2026 VinsonFung · 仅限非商业使用'), h('br'),
         h('a', { href: 'https://www.openstreetmap.org/copyright', target: '_blank', rel: 'noopener' }, '地图 © OpenStreetMap 贡献者 · ODbL'), ' · v' + CFG.GAME_VERSION));
     // 右上角：公告、官方社区和主题共用按钮样式；外链保留当前游戏页面。

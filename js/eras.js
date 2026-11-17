@@ -30,6 +30,10 @@
   Eras.index = function (t) { const w = Eras.weights(t); if (!w) return -1; let b = 0; for (let k = 1; k < w.length; k++) if (w[k] >= w[b]) b = k; return b; };
   Eras.current = function (t) { const k = Eras.index(t); return k >= 0 ? list()[k] : null; };
   Eras.endOf = function (k) { const L = list(); return k + 1 < L.length ? L[k + 1].from : null; };
+  Eras.rangeLabel = function (k) {
+    const e = list()[k], to = e.through ?? Eras.endOf(k);
+    return e.from + (to ? '–' + to : ' 年起');
+  };
 
   // 历史事件的限时效果：事件日期起 years / months 内全效，之后 fade 年内线性减弱
   const evStart = function (e) { return e.y + ((e.m || 1) - 1) / 12; };

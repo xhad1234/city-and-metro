@@ -751,7 +751,8 @@
       }
       if (comp[c] >= 0) keep.add(comp[c]);
     }
-    const inM = function (c) { return keep.has(comp[c]); };
+    // 可独立开放的片区（如崇明各岛）按自己的日期取得建设权。
+    const inM = function (c) { const k = reg[c]; return R[k].independent ? !!open[k] : keep.has(comp[c]); };
     // 从地图边缘出发、不经过可建设范围能到达的未开放格属于外围的一整块；到达不了的是被包围的小块（可以建设）
     const out = new Uint8Array(N), q = [], H = this.H;
     wr.fill(0);
@@ -762,7 +763,7 @@
     bfs(q, function (v) { return !inM(v); }, out, wr);
     const mask = new Uint8Array(N);
     // lockEnclaves（v2.8）：岛屿地图四面环海，地图边缘到不了的未开放片区不算「被包围的小块」；empty 片区任何时候都不能建设
-    for (let c = 0; c < N; c++) if (LF[c] >= 0.5 && (R[reg[c]].empty || (!inM(c) && (out[c] || D.lockEnclaves)))) mask[c] = 1;
+    for (let c = 0; c < N; c++) if (LF[c] >= 0.5 && (R[reg[c]].empty || (!inM(c) && (R[reg[c]].independent || out[c] || D.lockEnclaves)))) mask[c] = 1;
     return mask;
   };
   City.prototype.lockState = function () {
