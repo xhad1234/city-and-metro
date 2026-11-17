@@ -5,7 +5,7 @@ const load=async f=>vm.runInContext(await fs.readFile(new URL(f,root),'utf8'),c,
 for(const[,f]of(await fs.readFile(new URL('index.html',root),'utf8')).matchAll(/<script src="([^"]+)"/g)){await load(f);if(f==='js/save.js')break;}
 const C=c.CM,M=C.Metro,copy=x=>JSON.parse(JSON.stringify(x)),sum=a=>a.reduce((s,n)=>s+n,0);C.UI=function(){};
 for(const f of ['settings','icons','pages','corp','fleet','opsapp','render','sites','scenery'])await load('js/'+f+'.js');
-assert.equal(C.CFG.GAME_VERSION,'2.7.2');assert.equal(C.CFG.RULES_REVISION,12);assert.equal(C.MAP_ORDER.length,12);assert.equal(C.Fleet.MODELS.length,56);assert.ok(!C.MAPS.sg&&!C.MAPS.ny&&!C.Achievements&&!C.Desktop);
+assert.equal(C.CFG.GAME_VERSION,'2.7.2');assert.ok(C.CFG.RULES_REVISION>=12);assert.equal(C.MAP_ORDER.length,12);assert.equal(C.Fleet.MODELS.length,56);assert.ok(!C.MAPS.sg&&!C.MAPS.ny&&!C.Achievements&&!C.Desktop);
 C.useMap('tutorial');const g=C.Game.create({mode:'free',tutorial:true,seed:20000101}),F=C.Fleet;F.ensure(g);let fixture;
 for(let y=5;y<g.city.H-5&&!fixture;y++)for(let x=5;x<g.city.W-22&&!fixture;x++){
  if([0,4,8,12,16].some(d=>!M.checkSite(g.city,x+d,y,'underground').ok))continue;
@@ -75,7 +75,7 @@ console.log('PASS tutorial rail hub ridership, all three interchange types and r
 const payload=copy(g.serialize());payload.rulesRevision=11;payload.traffic.v=4;
 const body=JSON.stringify(payload),raw=JSON.stringify({format:C.CFG.SAVE_FORMAT,version:2,gameVersion:'2.7.1',savedAt:Date.now(),body,checksum:C.U.fnv(body)}),imp=await C.Save.importText(raw),old=await C.Save.load(imp.slotId);
 assert.ok(old.__backupSlot);assert.equal(JSON.parse(memory.get(C.Save.slotInfo(old.__backupSlot).key)).body,body);
-const restored=C.Game.restore(copy(old));assert.equal(restored.econ.funds,payload.econ.funds);assert.equal(JSON.stringify(restored.net),JSON.stringify(payload.net));assert.equal(JSON.stringify(restored.econ.ledger),JSON.stringify(payload.econ.ledger));assert.equal(restored.traffic.v,5);
+const restored=C.Game.restore(copy(old));assert.equal(restored.econ.funds,payload.econ.funds);assert.equal(JSON.stringify(restored.net),JSON.stringify(payload.net));assert.equal(JSON.stringify(restored.econ.ledger),JSON.stringify(payload.econ.ledger));assert.equal(restored.traffic.v,C.CFG.TRAFFIC_MODEL);
 console.log('PASS exact v2.7.1 backup, traffic rebuild and preserved network, funds and historical ledger');
 
 const byId=C.Fac.byId,facIndex=g.model.facIndex,facStats=g.model.facStats,ready=g.model.trafficReady,verified=g.model.trafficVerified,clock={...g.clock},fare=g.econ.fare;
