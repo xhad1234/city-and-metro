@@ -32,7 +32,8 @@
     { id: 'jobs', group: 'city', name: '住宅与就业', icon: 'lyJobs', color: '#6447dc', desc: '居住与岗位的分布' },
     { id: 'fac', group: 'city', name: '设施出行需求', icon: 'lyFac', color: '#c2410c', desc: '重要设施与各片区吸引的出行（按目的）' },
     { id: 'cong', metric: true, group: 'traffic', name: '道路拥堵', icon: 'lyCong', color: '#df3030', desc: '主要道路当前的拥堵程度' },
-    { id: 'flow', group: 'traffic', name: '出行与通勤', icon: 'lyFlow', color: '#2557d6', desc: '箭头显示主要出行方向，底色显示各片区的通勤时间' },
+    { id: 'flow', group: 'traffic', name: '出行方向', icon: 'lyFlow', color: '#2557d6', desc: '箭头显示各片区的主要出行方向' },
+    { id: 'commute', group: 'traffic', name: '通勤时间', icon: 'timer', color: '#8a4fd3', desc: '工作日早高峰，各片区居民上班的门到门平均时间' },
     { id: 'mshare', group: 'traffic', name: '乘地铁比例', icon: 'metro', color: '#0f7fb0', desc: '各片区居民的出行有多少乘地铁' },
     { id: 'cover', group: 'metro', name: '地铁覆盖', icon: 'lyCover', color: '#14a252', desc: '步行可达车站的范围与阻隔', metric: true },
     { id: 'station', group: 'metro', name: '车站客流', icon: 'lyStation', color: '#109e90', desc: '客流与运力负荷' },
@@ -1493,7 +1494,6 @@
     this.placeFeed();
   };
   UI.prototype.setLayer = function (id) {
-    if (id === 'commute') id = 'flow';
     const changed = id !== this.layer;
     if (changed) snd('soft');
     this.layer = id; this.R.layer = id; this.R.heatKey = ''; this.renderDock();
@@ -1633,8 +1633,12 @@
           li('#2166cc', '其中乘地铁（箭头中间的蓝色部分）', 'line');
         }
         note = '每个片区当前时段最主要的出行方向（第二方向接近时也画出）：箭头从片区指向目的地，尖端标出目的地名称；两个片区互为主要方向时画成双向箭头。线越粗出行越多，新区域开放、修建地铁后会随之变化。';
-        const sc = R.rateScales && R.rateScales.flow || { lo: 15, hi: 45 };
-        grad(['#40aa78', '#f5c850', '#cd3232'], sc.lo + ' 分钟以内', sc.hi + ' 分钟以上'); note += ' 底色为工作日早高峰门到门通勤时间。';
+        break;
+      }
+      case 'commute': {
+        const sc = R.rateScales && R.rateScales.commute || { lo: 15, hi: 45 };
+        grad(['#40aa78', '#f5c850', '#cd3232'], sc.lo + ' 分钟以内', sc.hi + ' 分钟以上');
+        note = '工作日早高峰，住在该片区的人从家到工作地点的门到门平均时间，含步行或骑车接驳、候车、乘车、换乘及停车。颜色随当前全图数据调整；缺少有效通勤样本的地方不着色。点击片区可查看具体时间。';
         break;
       }
       case 'cover': opts('cover', [['time', '步行时间'], ['station', '所属车站']]);

@@ -26,6 +26,7 @@ WIDTH, HEIGHT = 512, 560
 CORE = box(DX, DY, DX + 152, DY + 152)
 FRAME = box(0, 0, WIDTH, HEIGHT)
 PERIMETER = FRAME.difference(CORE)
+EXTRA_TOWN = None
 DISTRICTS = set('黄浦区 徐汇区 长宁区 静安区 普陀区 虹口区 杨浦区 闵行区 宝山区 嘉定区 浦东新区 金山区 松江区 青浦区 奉贤区 崇明区'.split())
 ROAD_CLASS = {'motorway': 4, 'trunk': 4, 'primary': 3, 'secondary': 2, 'tertiary': 2}
 STREETS = {'unclassified', 'residential', 'living_street', 'service', 'cycleway'}
@@ -136,9 +137,9 @@ class Extract(osmium.SimpleHandler):
         highway = t.get('highway', '')
         link = highway.endswith('_link')
         road = ROAD_CLASS.get(highway.removesuffix('_link'))
-        street = self.shanghai and highway in STREETS
+        street = (self.shanghai or EXTRA_TOWN is not None) and highway in STREETS
         rail = t.get('railway') == 'rail' and t.get('usage') != 'industrial'
-        water = self.shanghai and t.get('waterway') in ('river', 'canal')
+        water = (self.shanghai or EXTRA_TOWN is not None) and t.get('waterway') in ('river', 'canal')
         if not (coastal or road or street or rail or water):
             return
         try:
@@ -165,8 +166,11 @@ class Extract(osmium.SimpleHandler):
             encoded = encode(piece.coords)
             if road:
                 self.out['roads'].append([name, road, flags | (4 if link else 0), encoded])
-            if street and piece.length >= 0.18:
-                self.out['streets'].append(encoded)
+            local = FRAME if self.shanghai else EXTRA_TOWN
+            if street:
+                for segment in parts(piece.intersection(local), 'LineString'):
+                    if segment.length >= 0.18:
+                        self.out['streets'].append(encode(segment.coords))
             if rail:
                 high_speed = t.get('highspeed') == 'yes'
                 self.out['rail'].append([name, flags | (16 if high_speed else 0), encoded])
@@ -175,10 +179,12 @@ class Extract(osmium.SimpleHandler):
                     width = float(t.get('width', '12').removesuffix(' m'))
                 except ValueError:
                     width = 12
-                self.out['water'].append([name, max(0.05, min(width / 250, 0.3)), encoded])
+                for segment in parts(piece.intersection(local), 'LineString'):
+                    if segment.length >= 0.2:
+                        self.out['water'].append([name, max(0.05, min(width / 250, 0.3)), encode(segment.coords)])
 
     def area(self, area):
-        if not self.shanghai or area.id in self.ids['areas']:
+        if area.id in self.ids['areas']:
             return
         t = area.tags
         level = t.get('admin_level') if t.get('boundary') == 'administrative' else None
@@ -200,6 +206,10 @@ class Extract(osmium.SimpleHandler):
             return
         if not geom.is_valid:
             geom = make_valid(geom)
+        if not self.shanghai:
+            if EXTRA_TOWN is None or not geom.intersects(EXTRA_TOWN):
+                return
+            geom = geom.intersection(EXTRA_TOWN)
         self.ids['areas'].add(area.id)
         if admin:
             clip = geom.intersection(FRAME)
@@ -211,7 +221,7 @@ class Extract(osmium.SimpleHandler):
                 self.out[key].append([self.name(name), *rings(poly)])
 
     def node(self, node):
-        if not self.shanghai or node.id in self.ids['nodes']:
+        if node.id in self.ids['nodes']:
             return
         t = node.tags
         if t.get('railway') == 'station':
@@ -225,6 +235,8 @@ class Extract(osmium.SimpleHandler):
             return
         x, y = project(node.lon, node.lat)
         if not in_frame(x, y):
+            return
+        if not self.shanghai and (EXTRA_TOWN is None or not EXTRA_TOWN.covers(Point(x, y))):
             return
         self.ids['nodes'].add(node.id)
         key = name, kind, round(x / 2), round(y / 2)
@@ -241,7 +253,7 @@ class Extract(osmium.SimpleHandler):
             self.out['admin'].append([6, self.name('原图市内补全'), *rings(poly)])
         for (level, name), geom in sorted(self.admin.items()):
             if level == 8:
-                geom = geom.intersection(municipality)
+                geom = geom.intersection(EXTRA_TOWN if name == '花桥镇' else municipality)
             for poly in parts(geom.simplify(0.07), 'Polygon'):
                 if poly.area >= 0.05:
                     self.out['admin'].append([level, self.name(name), *rings(poly)])
@@ -357,6 +369,17 @@ if __name__ == '__main__':
     KX, KY = projection['kx'], projection['ky']
     LON, LAT = projection['lon0'] - DX / KX, projection['lat0'] + DY / KY
     projection.update(lon0=LON, lat0=LAT)
+    class ExtraBoundary(osmium.SimpleHandler):
+        def __init__(self):
+            super().__init__()
+            self.factory = osmium.geom.GeoJSONFactory()
+        def area(self, area):
+            global EXTRA_TOWN
+            if area.tags.get('boundary') == 'administrative' and source_name(area.tags) == '花桥镇':
+                EXTRA_TOWN = make_valid(project_geom(shape(json.loads(self.factory.create_multipolygon(area)))))
+    ExtraBoundary().apply_file(sys.argv[4], locations=True)
+    if EXTRA_TOWN is None:
+        raise ValueError('Jiangsu extract is missing the Huaqiao township boundary')
     shift_core(out)
     ext = Extract(out)
     ext.load(sys.argv[3:])

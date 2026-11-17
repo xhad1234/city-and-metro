@@ -28,10 +28,19 @@
     at: llW(31.5490, 121.6940),
     runways: [[llW(31.5540, 121.6760), llW(31.5540, 121.7130)], [llW(31.5435, 121.6760), llW(31.5435, 121.7130)]],
   };
-  const site = (id, n, t, lat, lon, y0, w, note, extra) =>
-    Object.assign({ id: 'sh_' + id, n, t, at: llW(lat, lon), fixedSite: true, regionGate: true, y0, w, note }, extra);
+  const site = (id, n, t, lat, lon, y0, w, note, extra) => {
+    const s = Object.assign({ id: 'sh_' + id, n, t, at: llW(lat, lon), fixedSite: true, regionGate: true, y0, w, note }, extra);
+    if (typeof s.src === 'string') s.src = { url: s.src };
+    return s;
+  };
   const localRail = (id, n, lat, lon, y0, pax, note) =>
     site(id, n, 'rail', lat, lon, y0, null, note, { pax });
+  const railInterface = (id, n, lat, lon, dir, km, y0, pax, src, note, planned = true) =>
+    site(id, n, 'rail', lat, lon, y0, null, note, {
+      ext: [dir, km], extEdge: llW(lat, lon), pax,
+      src: { pos: '位置：走廊省界接口', year: planned ? '启用：游戏情景' : '年份：史实参考', sim: planned, url: src },
+      interfacePlan: planned, regionGate: false,
+    });
 
   // 虹桥机场飞行区（近似）、陆家嘴金融贸易区核心（近似）、虹桥商务区（近似，机场以西）
   const hongqiao = poly([[31.2160, 121.3285], [31.2160, 121.3500], [31.1790, 121.3500], [31.1790, 121.3285]]);
@@ -59,9 +68,11 @@
           desc: '游戏设定：主场馆选址闵行吴泾，城市获得奥运轨道交通专项拨款。' },
         open: [2040, 8],
         why: '游戏设定参考吴泾工业区的滨江更新与战略预留用地。' },
+      { use: 'portal', label: '长三角铁路接口', why: '参考沪苏嘉城际铁路、嘉闵线北延伸及金山至平湖线等规划，在模拟范围边界预留接驳口；未来启用时间与客流为游戏情景。' },
     ],
-    city: '上海', riverName: '黄浦江', seaName: '长江口', hsrYear: 2010, terrainRevision: 2,
+    city: '上海', riverName: '黄浦江', seaName: '长江口', hsrYear: 2010, terrainRevision: 3,
     population: CM.SH_POPULATION,
+    airportLayout: CM.SH_AIRPORT_LAYOUT,
     populationStyle: { from: 2020 }, smoothFacilityHeat: true,
     stages: [[1993, '无地铁时代'], [2000, '浦东开发初期'], [2010, '迎世博建设期']], stageLast: '超大城市网络化时期',
     // 历史发展阶段（v2.2，eras.js）：summary 中「史实」可查证，「估算」为模型设定的发展倾向；grow 只改变人口与岗位增长的去向（总量仍按人口曲线），
@@ -143,7 +154,7 @@
       { id: 'disney', name: '上海迪士尼度假区', park: true, open: 2016, plan: 'res', poly: [[31.1506, 121.6497], [31.1506, 121.6626], [31.1455, 121.6697], [31.1375, 121.6697], [31.1375, 121.6557], [31.1411, 121.6497]].map(function (p) { return llW(p[0], p[1]); }), note: '2016 年 6 月上海迪士尼乐园开园（史实）；同年 4 月地铁 11 号线迪士尼站启用（史实）' },
       { id: 'jiading', name: '嘉定（江桥·真新）', district: ['嘉定区'], open: 2005, plan: 'res', pop: 12.35e6 },
     ],
-    defaultRegion: { id: 'outside_sh', name: '上海市界外', open: null, empty: true, plan: 'res', lockNote: '不属于上海市建设范围' },
+    defaultRegion: { id: 'outside_sh', name: '上海及花桥范围外', open: null, empty: true, plan: 'res', lockNote: '不属于本图上海及花桥镇的建设范围' },
     replan: [{ year: 2033, region: 'wujing', plan: 'mix' }, { year: 2041, region: 'wujing_village', plan: 'res' }],
     plans: CM.DATA.plans,
     // 1990 年人口与就业中心（估算，人/km²；r 约为影响半径 km）
@@ -194,9 +205,11 @@
       '沪嘉高速': 1988, '京沪高速': 1996, '沪昆高速': 1998, '沪渝高速': 2002, '沪金高速': 2000, '沪崇高速': 2009, '沪翔高速': 2011,
       '杨高路': 1992, '世纪大道': 2000, '罗山路': 1997, '龙东大道': 1998, '龙东高架路': 2008, '罗山高架路': 2005, '华夏高架路': 2009, '军工高架路': 2007,
       '北翟高架路': 2015, '嘉闵高架路': 2014, '虹梅高架路': 2014, '崧泽高架路': 2015, '度假区高架路': 2016, '五洲大道': 2011, '世博大道': 2010,
+      '云亮路': 2026.5, '云亭东路': 2026.5, '通航二路': 2026.5, '凯宇路': 2026.5,
+      '南纬八路上匝道': 2028 + 11 / 12, '南纬八路下匝道': 2028 + 11 / 12,
     },
     bridgeYears: {}, bridgeDefaultYear: 1990,
-    simRoads: [],
+    simRoads: (CM.SH_AIRPORT_LAYOUT.roads || []).map(r => Object.assign({}, r, { y: r.y === 2026 ? 2026.5 : r.y })),
     landmarks: [
       Object.assign(atW(31.2395, 121.4850), { id: 'sh_bund', name: '外滩建筑群', w: 1200, d: 50, rot: -96, year: 1937, kind: 'bund' }),
       Object.assign(atW(31.2356, 121.4670), { id: 'sh_park', name: '国际饭店', w: 40, d: 40, year: 1934, kind: 'skyscraper', h: 83 }),
@@ -242,12 +255,12 @@
         note: '虹桥枢纽铁路站房。2024 年铁路客流约 1.55 亿人次，游戏按日均到发及市内接驳估算；不叠加机场或枢纽其他方式客流。' },
       { id: 'sh_disney', n: '上海迪士尼乐园', t: 'scenic', lm: 'sh_disney', y0: [2016, 6], w: [[2016.5, 0.045], [2019, 0.05], [2020, 0.025], [2021, 0.04], [2023, 0.05]], we: 1.9, note: '主题乐园：周末与假日客流明显高于工作日（估算）；位于浦东川沙，2016 年 6 月开园。' },
       { id: 'sh_pvgair', n: '浦东机场（川沙接驳）', t: 'air', ext: ['E', 9], extEdge: [oldOffset[0] + 152, oldEdge[1]], at: oldEdge, y0: [1999, 9], y1: [2015, 1], pax: [[1999.67, 0.9], [2005, 5.8], [2010, 9.2], [2015, 14]], note: '1999 年 9 月浦东机场通航。游戏在机场片区开放前保留川沙接驳。' },
-      { id: 'sh_pvg_terminal', n: '上海浦东国际机场', t: 'air', at: llW(31.1519, 121.8015), fixedSite: true, r: 3, y0: [2015, 1],
+      { id: 'sh_pvg_terminal', n: '上海浦东国际机场（T1·T2）', t: 'air', at: llW(31.1519, 121.8015), fixedSite: true, noModel: true, r: 3, y0: [2015, 1],
         rw: [llW(31.1721, 121.7963), llW(31.1360, 121.7986)], pax: [[2015, 14], [2019, 18], [2020, 7.5], [2021, 8], [2022, 3.5], [2023, 13], [2024, 18.2], [2025, 20], [2030, 23], [2040, 29]],
         note: '航站区以两楼之间的到达交通中心代表。根据民航及上海机场年报扣除纯空空中转等，估算市内接驳量。' },
-      { id: 'sh_hqair_t1', n: '虹桥机场（1号航站楼时期）', t: 'air', at: llW(31.1965, 121.3425), fixedSite: true, y1: [2010, 3],
+      { id: 'sh_hqair_t1', n: '虹桥机场（1号航站楼时期）', t: 'air', at: llW(31.1965, 121.3425), fixedSite: true, noModel: true, y1: [2010, 3],
         pax: [[1990, 1.4], [1999.67, 3.5], [2000, 2.5], [2005, 4.8], [2010.17, 8.4]], note: '2010 年 3 月以前，虹桥民航客运集中在机场东侧的 1 号航站楼。' },
-      { id: 'sh_hqair', n: '上海虹桥国际机场', t: 'air', at: llW(31.1958, 121.3266), fixedSite: true, y0: [2010, 3], r: 1.7,
+      { id: 'sh_hqair', n: '上海虹桥国际机场（T2接驳）', t: 'air', at: llW(31.1958, 121.3266), fixedSite: true, noModel: true, y0: [2010, 3], r: 1.7,
         rw: [llW(31.2130, 121.3316), llW(31.1834, 121.3332)], pax: hongqiaoPax, note: '2010 年 3 月起以 2 号航站楼代表虹桥机场两座航站楼的市内接驳。' },
       { id: 'sh_chongming_air', n: '崇明国际机场', t: 'air', at: chongmingAir.at, rw: chongmingAir.runways[1], fixedSite: true,
         regionGate: true, y0: [2035, 1], r: 2, pax: hongqiaoPax,
@@ -353,6 +366,9 @@
       site('zhoupu_wanda', '周浦万达广场', 'shop', 31.11676, 121.56530, 2009, 0.017, '浦东新区沪南公路3449弄。'),
       site('chuansha_bailian', '百联川沙购物中心', 'shop', 31.18722, 121.69347, 2020, 0.014, '浦东新区翔川路638号。'),
       site('chongming_wanda', '城桥·崇明万达广场', 'shop', 31.6291, 121.4094, 2020, 0.014, '崇明区城桥镇崇明大道8388号。'),
+      site('huaqiao_sce', '花桥·中骏世界城', 'shop', 31.301946, 121.100839, [2024, 10], 0.019, '江苏昆山市花桥镇沿沪大道西侧、花桥站北侧；按实际商场地块定位。', { src: 'https://www.ks.gov.cn/kss/qzkx/202507/9a9856f869014de1846f7a000086c9e3.shtml' }),
+      site('huaqiao_innovation', '花桥国际创新港', 'cbd', 31.287537, 121.048526, 2020, 0.012, '江苏昆山市花桥镇绿地大道西段的国际创新港实际园区；2020 年起随花桥片区在游戏内开放。'),
+      site('huaqiao_greenland_hospital', '花桥·东方绿地医院', 'hosp', 31.293443, 121.094211, 2020, 0.009, '江苏昆山市花桥镇绿地大道，按医院地块定位；2020 年起随花桥片区在游戏内开放。'),
       // 每个校区是独立目的地；旧组团 id 保留给一所学校以兼容旧设施任务。
       site('songjiang_uni', '东华大学（松江校区）', 'uni', 31.05833, 121.20759, 2001, 0.010, '松江区人民北路2999号，定位于校园教学区，避开镜月湖。', { r: 1.7 }),
       site('sisu_songjiang', '上海外国语大学（松江校区）', 'uni', 31.04911, 121.22050, 2001, 0.008, '松江区文翔路1550号。', { r: 1.5 }),
@@ -374,6 +390,7 @@
       site('haiwan_uni', '上海师范大学（奉贤校区）', 'uni', 30.83974, 121.51285, 1987, 0.013, '奉贤区海思路100号。', { r: 1.6 }),
       site('sit_fengxian', '上海应用技术大学（奉贤校区）', 'uni', 30.84455, 121.50612, 2010, 0.009, '奉贤区海泉路100号。', { r: 1.5 }),
       site('ecust_fengxian', '华东理工大学（奉贤校区）', 'uni', 30.83319, 121.49966, [2007, 9], 0.014, '奉贤区海思路999号。', { r: 1.8 }),
+      site('silicon_lake', '硅湖职业技术学院（花桥）', 'uni', 31.288111, 121.135214, 1998, 0.008, '江苏昆山市花桥镇曹安开发区1号，按实际校园地块定位。', { r: 1.5, src: 'https://www.usl.edu.cn/index.php?PageSpeed=noscript&c=show&id=1172' }),
       // 科创园区与公共服务。
       site('zizhu', '紫竹科学园区', 'cbd', 31.02450, 121.44778, 2002, [[2015, 0.012], [2025, 0.022]], '闵行区吴泾镇东川路555号，紫竹国家高新技术产业开发区。'),
       site('g60', '松江·G60科创云廊', 'cbd', 31.09148, 121.32104, 2021, 0.014, '松江区莘砖公路239号，长三角G60科创走廊的松江园区。'),
@@ -398,6 +415,7 @@
       site('changxing_park', '长兴岛郊野公园', 'park', 31.40657, 121.70447, 2016, 0.008, '崇明区长兴岛秋柑路199号。', { r: 2 }),
       site('yuanxiang', '远香湖公园', 'park', 31.3518, 121.2601, 2010, 0.008, '嘉定新城白银路一带，定位于远香湖西侧陆地。'),
       site('auto_museum', '上海汽车博物馆', 'scenic', 31.28053, 121.16578, 2007, 0.008, '嘉定区安亭镇博园路7565号。'),
+      site('tianfu_wetland', '天福国家湿地公园（天福庵片区）', 'park', 31.328163, 121.104446, 2020, 0.008, '昆山花桥镇北部湿地公园南侧的天福庵片区，按实际地名定位游览接驳点；2020 年起随花桥片区在游戏内开放。', { r: 2, src: 'https://water.suzhou.gov.cn/slj/kss/202512/b5f928e1fc2b495784f391b5106980c5.shtml' }),
     ],
     districtLabels: [['黄浦', ['黄浦区']], ['静安', ['静安区']], ['徐汇', ['徐汇区']], ['长宁', ['长宁区']], ['普陀', ['普陀区']], ['虹口', ['虹口区']], ['杨浦', ['杨浦区']], ['浦东', ['浦东新区']], ['宝山', ['宝山区']], ['闵行', ['闵行区']], ['嘉定', ['嘉定区']]],
     // 纪事（只能在末尾追加：已发生记录按序号保存）
@@ -449,6 +467,16 @@
       { y: 2041, m: 1, tag: '模拟', title: '奥运村转为居住社区', desc: '吴泾奥运村改作居住与社区服务用地，场馆继续开放。',
         fx: { grow: { region: 'wujing_village', pop: 2, years: 4 } } },
       { y: 2035, m: 1, tag: '模拟', title: '崇明国际机场启用', desc: '游戏设定：崇明岛中东部新增国际机场，市内接驳客流达到与虹桥机场相同的规模。' },
+      // 只在末尾追加，保留旧存档按序号记录的已发生事件。
+      { y: 2025, m: 1, tag: '模拟', title: '开发崇明：生态岛交通建设',
+        desc: '参考崇明生态岛规划，游戏从 2025 年起推进城镇联通与生态文旅接驳。未来十年提高崇明岛和长兴岛的人口、岗位增长权重，发布城桥—陈家镇联通及东平森林公园接驳任务。',
+        fx: { grow: { region: ['chongming', 'changxing'], pop: 1.25, jobs: 1.35, years: 10, fade: 2 } } },
+      { y: 2025, m: 1, tag: '模拟', title: '花桥联动开发与长三角铁路接口预留',
+        desc: '花桥沿用崇明的 2020 年开放规则；2025 年起提高花桥片区的增长权重，并发布沪苏通勤、科教商务接驳任务。沪苏浙边界按规划走廊预留铁路接口，未建成线路的启用年与客流均为游戏情景。',
+        fx: { grow: { region: 'huaqiao', pop: 1.25, jobs: 1.35, years: 10, fade: 2 } } },
+      { y: 2022, m: 1, tag: '史实', title: '浦东机场四期扩建开工', desc: '在现有 T1、T2 和卫星厅南侧建设 T3 航站区。游戏显示实际建筑规划轮廓的施工场地，按阶段加入配套道路。' },
+      { y: 2026, m: 7, tag: '史实', title: '浦东机场南侧交通改线与配套道路启用', desc: '南进出场路地道东线及云亮路、云亭东路、通航二路、凯宇路等配套道路投入使用，服务机场四期建设和南侧交通组织。' },
+      { y: 2028, m: 12, tag: '模拟', title: '浦东机场 T3 航站楼启用', desc: '依据四期工程预计 2028 年底具备投运条件的公开计划，在游戏中启用南侧 T3 航站楼及配套道路。机场客流在 T1/T2 与 T3 之间分配，启用日期及分配比例为规划情景。' },
     ],
     // 本地历史主题任务：参考上海的发展需求，不要求复刻真实线路走向（奖励单位：万元，1990 年价格）
     histTasks: [
@@ -477,7 +505,7 @@
       { id: 'shd2', from: [1998, 1], to: [2010, 12], type: 'connect', months: 36, reward: 35000, title: '古北与虹桥开发区', desc: '连接古北、虹桥路与徐家汇。', anchors: [anchor('古北', 31.2010, 121.3980, 3), anchor('虹桥路', 31.1980, 121.4210, 3), anchor('徐家汇', 31.1940, 121.4370, 3)] },
       { id: 'shd3', from: [2005, 1], to: [2018, 12], type: 'connect', months: 36, reward: 40000, title: '宝山大型居住区', desc: '连接大场、上海大学与上海站。', anchors: [anchor('大场', 31.2950, 121.4100, 3), anchor('上海大学', 31.3160, 121.3920, 3), anchor('上海站', 31.2495, 121.4560, 3)] },
     ],
-    taskNote: '历史任务参考城市发展和交通规划；2027 年后的新枢纽、崇明机场及奥运任务为游戏情景。无须照搬真实线路，只需完成目标。',
+    taskNote: '历史任务参考城市发展和交通规划；2025 年崇明、花桥开发任务，以及未来铁路接口、新枢纽、崇明机场和奥运任务为游戏情景。无须照搬真实线路，只需完成目标。',
     // 城市策略难题（v2.3，可选挑战）
     scenarios: [
       { id: 'sh-sc1', theme: '上海：浦东开发与越江', title: '把浦西接进浦东腹地', type: 'budgetConnect', from: [1993, 1], to: [2004, 12], months: 60, rewardMonths: 3, budgetX: 1.2,
@@ -492,7 +520,7 @@
       ['真实地理', 'hist', '黄浦江、苏州河与长江口、道路与桥隧、铁路、公园、街道边界与地名来自 OpenStreetMap（© OpenStreetMap 贡献者，ODbL），为现代数据，按 250 m 网格投影。'],
       ['史实参考', 'hist', '浦东开发开放（1990 年）、陆家嘴与各开发区设立年份、越江桥隧与高架道路通车年份、地标落成年份、世博会与虹桥综合交通枢纽。'],
       ['估算', 'est', '1990 年人口与就业分布、人口增长曲线、出行率、时间价值、造价、票价、运营费用与拨款、地图范围 GDP。'],
-      ['模拟', 'sim', '近郊与远郊分批开放。2027 年起进入模拟未来，2040 年举办吴泾奥运会，人口达到约 3500 万。普通铁路、高速铁路与机场只产生市内接驳需求；真实的上海地铁不会自动出现。'],
+      ['模拟', 'sim', '近郊与远郊分批开放，昆山花桥镇随崇明于 2020 年开放，2025 年联动开发。规划铁路接口的启用年与客流是游戏情景。2027 年起进入模拟未来，2040 年举办吴泾奥运会，地图人口达到约 3500 万。普通铁路、高速铁路与机场只产生接驳需求；真实地铁不会自动出现。'],
       ['', '', '模拟结果不得作为真实上海交通规划预测。'],
     ],
     // 线路配色参考上海地铁
@@ -529,9 +557,45 @@
     far('changxing', '长兴岛', towns('长兴镇'), 'resind'),
     far('hengsha', '横沙岛', towns('横沙乡')),
     far('chongming', '崇明岛', { district: ['崇明区'] }),
+    far('huaqiao', '昆山花桥（江苏）', { streets: ['花桥镇'] }, 'mix'),
   );
   data.districtLabels = ['黄浦区', '徐汇区', '长宁区', '静安区', '普陀区', '虹口区', '杨浦区', '闵行区',
     '宝山区', '嘉定区', '浦东新区', '金山区', '松江区', '青浦区', '奉贤区', '崇明区'].map(n => [n, [n]]);
+  data.districtLabels.push(['昆山花桥（江苏）', ['花桥镇']]);
+  data.runways.push(...CM.SH_AIRPORT_LAYOUT.runways.filter(r => r.airport === 'pvg'));
+  const hongqiaoRunway = CM.SH_AIRPORT_LAYOUT.runways.find(r => r.ref === '18L/36R');
+  data.airport.runway = [hongqiaoRunway.a, hongqiaoRunway.b];
+  // T3 takes a share of the same airport total, rather than duplicating it.
+  const pvg = data.facilities.find(f => f.id === 'sh_pvg_terminal'), pvgTotal = pvg.pax;
+  const t3 = CM.SH_AIRPORT_LAYOUT.terminals.find(t => t.id === 'pvg_t3'), t3Year = t3.from;
+  const pvgRunway = CM.SH_AIRPORT_LAYOUT.runways.find(r => r.ref === '17L/35R');
+  pvg.rw = [pvgRunway.a, pvgRunway.b];
+  pvg.pax = pvgTotal.filter(p => p[0] < t3Year).concat(
+    [[t3Year - 1e-6, CM.U.interp(pvgTotal, t3Year)], [t3Year, CM.U.interp(pvgTotal, t3Year) * 0.65]],
+    pvgTotal.filter(p => p[0] > t3Year).map(p => [p[0], p[1] * 0.65]));
+  pvg.note += ' T3 启用后本设施保留机场总接驳量的 65%，另 35% 分配给 T3，分配比例为模拟估算。';
+  data.facilities.push({ id: 'sh_pvg_t3', n: '浦东机场 T3 航站楼', t: 'air', at: [t3.x, t3.y],
+    fixedSite: true, regionGate: true, noModel: true, r: 3, y0: [2028, 12],
+    pax: pvgTotal.map(p => [p[0], p[1] * 0.35]),
+    note: '位于 T1、T2 和 S1/S2 卫星厅南侧，按实际建设轮廓定位。依据预计 2028 年底具备投运条件的计划，在游戏中于 2028 年 12 月启用；承担机场总接驳量的 35%（模拟），不与 T1/T2 重复统计。',
+    src: { pos: '位置：实际建设地块', year: '启用：规划情景', sim: true, url: 'https://www.shanghai.gov.cn/nw4411/20261015/854b367701174a589bab06b21ebd529e.html' } });
+  for (const terminal of CM.SH_AIRPORT_LAYOUT.terminals) data.places.push([terminal.name, terminal.x, terminal.y, 2]);
+  // 接口是规划走廊与模拟建设边界的接驳点，不冒充真实客运站。
+  // 已有沪苏双 11 号线按通车年份，其余日期和到发量明确作为未来情景。
+  data.facilities.push(
+    railInterface('huaqiao_suzhou_portal', '花桥西界·苏州轨交11号线接口', 31.301525, 121.049215, 'W', 25, [2023, 6], [[2023.42, 1.2], [2025, 1.8], [2040, 3.2]],
+      'https://www.ks.gov.cn/kss/qzkx/202507/9a9856f869014de1846f7a000086c9e3.shtml', '沿花桥博览中心以西的苏州轨交11号线走廊，在花桥镇西界预留接口，通往昆山城区、苏州。到发客流为游戏估算，图外线路不自动建成。', false),
+    railInterface('taicang_portal', '沪苏界·嘉闵北延伸接口', 31.452939, 121.173784, 'NW', 14, [2030, 1], [[2030, 1.8], [2040, 3.6]],
+      'https://jtw.sh.gov.cn/zdgc/20260104/6a44693fd0d54dfe90c78eb35b052472.html', '嘉定北和公路以北、沥江一带的沪苏省界，衔接太仓先导段方向。按规划走廊预留，非真实车站；2030 年启用及客流均为游戏情景。'),
+    railInterface('water_wujiang_portal', '沪苏界·水乡旅游线接口', 31.062189, 120.891210, 'NW', 22, [2030, 1], [[2030, 1.4], [2040, 2.8]],
+      'https://www.shanghai.gov.cn/nw12344/20230822/0f10c4e3ffee47f48aa8185c4649452c.html', '从青浦金泽水乡客厅向西北进入吴江的规划走廊，在沪苏省界预留接驳点。非真实车站；2030 年启用及客流均为游戏情景。'),
+    railInterface('water_jiashan_portal', '沪浙界·嘉善至西塘线接口', 31.019838, 120.897252, 'SW', 18, [2030, 1], [[2030, 1.2], [2040, 2.4]],
+      'https://www.gzw.sh.gov.cn/shgzw_zxzx_gqdt/20251112/be2dd0233993438596acb78728dbd701.html', '从青浦金泽水乡客厅向西南进入嘉善、西塘的规划走廊，在沪浙省界预留接驳点。非真实车站；2030 年启用及客流均为游戏情景。'),
+    railInterface('fengnan_portal', '沪浙界·嘉兴至枫南线接口', 30.884870, 121.005828, 'W', 22, [2030, 1], [[2030, 1], [2040, 2]],
+      'https://ghzyj.sh.gov.cn/nw2268/20251024/4547c6e32c134509a803228dedcdcf2e.html', '金山区枫泾镇西侧沪浙省界，预留南枫线与嘉兴至枫南线衔接方向。按规划走廊定位，非真实车站；2030 年启用及客流均为游戏情景。'),
+    railInterface('pinghu_portal', '沪浙界·金山至平湖线接口', 30.741079, 121.256444, 'W', 20, [2035, 1], [[2035, 0.8], [2040, 1.6]],
+      'https://jtw.sh.gov.cn/ghjh1/20230316/68bd91feee9649849089fa40b265fca4.html', '金山石化西侧、金山卫与独山港之间的沪浙省界，按已批选线走廊预留平湖方向接口。非真实车站；2035 年启用及客流均为游戏情景。'),
+  );
   data.places.push(['吴泾奥林匹克公园', ...llW(...wujing.stadium), 2]);
   // 以设施地块为任务锚点，避免任务位置和详情页不同。
   const facilityAnchor = (id, r) => {
@@ -551,6 +615,11 @@
       title: '文旅复苏：周末去佘山', desc: '让上海欢乐谷周末至少 12% 的到访出行乘地铁。' },
     connection('sh-airport-link', [2024, 12], [2034, 12], 280000, '机场联络：虹桥到浦东', '把虹桥和浦东两座机场接入同一个线网，服务机场联络线通车带来的接驳需求。', [f('hqair', 3), f('pvg_terminal', 4)]),
     connection('sh-songjiang-hub', [2024, 12], [2032, 12], 145000, '沪苏湖高铁：松江枢纽', '把上海松江站、东华大学松江校区和松江印象城接入同一个线网。', [f('songjiang_station', 3), f('songjiang_uni', 3), f('songjiang_inc', 3)]),
+    connection('sh-chongming-development', [2025, 1], [2034, 12], 180000, '开发崇明：城桥与陈家镇', '生态岛建设情景：将城桥镇的崇明万达广场与陈家镇接入同一个运营线网，改善岛内东西向交通。可用自己的线路和换乘方案完成。', [f('chongming_wanda', 3), Object.assign(anchorW('陈家镇', 31.4927, 121.7882, 5), { fixedSite: true })]),
+    { id: 'sh-chongming-ecotourism', appear: [2025, 1], deadline: [2035, 12], type: 'facShare', fac: 'sh_dongping_park', basis: 'we', target: 0.12, reward: 100000,
+      title: '开发崇明：东平森林公园接驳', desc: '生态文旅情景：让东平国家森林公园周末至少 12% 的到访出行乘地铁，车站可设在公园出入口附近。' },
+    connection('sh-huaqiao-development', [2025, 1], [2034, 12], 130000, '开发花桥：沪苏通勤与商业', '联动开发情景：将花桥中骏世界城、硅湖职业技术学院与安亭上海汽车博物馆接入同一个运营线网。', [f('huaqiao_sce', 2), f('silicon_lake', 2), f('auto_museum', 3)]),
+    connection('sh-huaqiao-business', [2025, 1], [2035, 12], 110000, '开发花桥：创新港与社区服务', '联动开发情景：连接花桥国际创新港、东方绿地医院与中骏世界城，服务产业园区和居民的日常出行。', [f('huaqiao_innovation', 3), f('huaqiao_greenland_hospital', 2), f('huaqiao_sce', 2)]),
     connection('sh-legoland-link', [2025, 7], [2034, 12], 125000, '金山文旅：乐高乐园和枫泾', '乐高乐园开园后，把园区、金山北站和枫泾古镇接入同一个线网。', [f('legoland', 3), f('jinshan_north', 3), f('fengjing', 3)]),
     connection('sh-eastern-hub', [2027, 7], [2035, 12], 180000, '东方枢纽换乘', '模拟：把上海东站、浦东国际机场和上海中医药大学张江校区接入同一个线网。', [f('east_station', 3), f('pvg_terminal', 4), f('zhangjiang_uni', 3)]),
     connection('sh-baoshan-hub', [2027, 7], [2035, 12], 155000, '宝山枢纽接驳', '模拟：把上海宝山站、顾村公园和宝山万达接入同一个线网。', [f('baoshan_station', 3), f('gucun', 4), f('baoshan_wanda', 3)]),
@@ -570,20 +639,23 @@
   (CM.MAP_LIST = CM.MAP_LIST || []).push({
     id: 'sh', name: '上海', title: '上海 · 1990', sub: '真实地理 · 1990 年起 · 人民币',
     desc: '从 1990 年尚无地铁的上海开始：七百多万人挤在浦西，黄浦江上没有一座桥，浦东开发开放即将宣布。陆家嘴、虹桥枢纽与世博会将陆续到来，地铁要追上中国最大城市的扩张。',
-    facts: [['范围', '128 km × 140 km，上海全市 16 区'], ['起始', '1990 年'], ['人口', '开局约 1360 万，2040 年约 3500 万'], ['货币', '人民币（元）'], ['模式', '经营挑战 / 自由建造']],
-    modes: ['challenge', 'free'], kind: 'real', mapVersion: 3, scenario: 'sh-1990',
+    facts: [['范围', '128 km × 140 km，上海 16 区及昆山花桥镇'], ['起始', '1990 年'], ['人口', '开局约 1360 万，2040 年约 3500 万'], ['货币', '人民币（元）'], ['模式', '经营挑战 / 自由建造']],
+    modes: ['challenge', 'free'], kind: 'real', mapVersion: 4, scenario: 'sh-1990',
     extent: [
       { from: 1, dx: 0, dy: 0, oldW: 124, oldH: 136, newW: 152, newH: 152, note: '地图向东扩大到川沙、曹路，向南扩大到梅陇、康桥一带',
         oldRegionIds: oldRegionIds.filter(id => id !== 'chuansha' && id !== 'disney'), oldLandmarkIds: oldLandmarkIds.filter(id => id !== 'sh_disney') },
       { from: 2, dx: oldOffset[0], dy: oldOffset[1], oldW: oldSize, oldH: oldSize, newZone: 16, oldRegionIds, oldLandmarkIds,
         note: '上海扩展至全市 16 区，新增近郊和远郊分别于 2015、2020 年开放' },
+      { from: 3, dx: 0, dy: 0, oldW: 512, oldH: 560, newW: 512, newH: 560, oldZone: 16, newZone: 16,
+        oldRegionIds: data.regions.filter(r => r.id !== 'huaqiao').map(r => r.id).concat(data.defaultRegion.id), oldLandmarkIds: data.landmarks.map(l => l.id),
+        note: '新增昆山花桥镇及长三角铁路接口，格网与现有站线坐标保持原位' },
     ],
     region: '中国内地', tagline: '浦江两岸，从零开始的超大网络', difficulty: 3, tags: ['无地铁开局', '越江', '超大城市'],
-    intro: '从 1990 年的浦西老城区修出第一条线，经黄浦江连接浦东。2015 年开放新增近郊，2020 年开放远郊与三岛。2027 年进入「喜迎奥运」，2040 年赛事在吴泾滨江举行。',
+    intro: '从 1990 年的浦西老城区修出第一条线，经黄浦江连接浦东。2015 年开放新增近郊，2020 年开放远郊、崇明三岛及昆山花桥镇。2025 年联动开发崇明与花桥，2027 年进入「喜迎奥运」，2040 年赛事在吴泾滨江举行。',
     features: [['building', '陆家嘴天际线', '东方明珠、金茂、环球金融中心与上海中心按年份出现'],
       ['map', '分批开放全市 16 区', '从市区扩展到嘉定、松江、青浦、奉贤、金山和崇明三岛'],
       ['flag', '2040 吴泾奥运会', '提前规划吴泾场馆的轨道接驳，承担赛时客流']],
-    highlights: [[1990, '浦东开发开放'], [1991, '南浦大桥通车'], [2010, '虹桥枢纽启用、世博会开幕'], [2015, '新增近郊开放'], [2020, '新增远郊开放'], [2027, '喜迎奥运'], [2040, '吴泾奥运会（模拟）']],
+    highlights: [[1990, '浦东开发开放'], [1991, '南浦大桥通车'], [2010, '虹桥枢纽启用、世博会开幕'], [2015, '新增近郊开放'], [2020, '远郊、崇明及花桥开放'], [2025, '崇明、花桥联动开发（模拟）'], [2027, '喜迎奥运'], [2040, '吴泾奥运会（模拟）']],
     geo: G, data: data,
     econ: { devOffset: 2, money: 1 },   // 出行选择参数：上海 1990 年约对应广州样本 1992 年的发展阶段
     cfg: {

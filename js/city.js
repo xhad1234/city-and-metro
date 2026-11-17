@@ -976,7 +976,7 @@
     });
     for (const sr of D.simRoads || []) {
       const p = new Float32Array([].concat.apply([], sr.p));
-      groups.push({ name: sr.n, cls: sr.c, flags: 0, ways: [p], bbox: [Math.min.apply(null, sr.p.map(function (q) { return q[0]; })), Math.min.apply(null, sr.p.map(function (q) { return q[1]; })), Math.max.apply(null, sr.p.map(function (q) { return q[0]; })), Math.max.apply(null, sr.p.map(function (q) { return q[1]; }))], year: sr.y, notable: true, sim: true });
+      groups.push({ name: sr.n, cls: sr.c, flags: sr.flags || 0, ways: [p], bbox: [Math.min.apply(null, sr.p.map(function (q) { return q[0]; })), Math.min.apply(null, sr.p.map(function (q) { return q[1]; })), Math.max.apply(null, sr.p.map(function (q) { return q[0]; })), Math.max.apply(null, sr.p.map(function (q) { return q[1]; }))], year: sr.y, notable: true, sim: true });
     }
     // 年份：名称表 → 跨江桥梁默认 → 所在区域开放年份
     for (const g of groups) {
@@ -1710,7 +1710,7 @@
     const before = this.totals();
     for (let c = 0; c < this.N; c++) {
       const k = grid[c] - 1, L = this.lu[c];
-      if (k < 0 || this.landFrac[c] < 0.5 || this.regions[this.region[c]].empty ||
+      if (k < 0 || this.landFrac[c] < 0.5 || this.isPark[c] || this.regions[this.region[c]].empty ||
         L === LU.PARK || L === LU.HILL || L === LU.AIRPORT || L === LU.LANDMARK) continue;
       const land = this.landFrac[c] * Math.max(0, 1 - this.taken[c]);
       if (land <= 0) continue;

@@ -148,7 +148,7 @@
       if (D.airport && yr >= D.airport.closeYear + 7 / 12 && city.lu.some(function (v) { return v === CM.LU.AIRPORT; })) city.closeAirport();
       let roads = false;
       for (const r of city.applyReclaim(y)) { roads = true; this.logEvent({ tag: r.tag || '史实', title: '填海成陆：' + r.name, desc: r.desc || '' }); }
-      if (city.applyRoads(y)) roads = true;
+      if (city.applyRoads(yr)) roads = true;
       city.activateLandmarks(yr);
       const tot = city.totals();
       for (let k = 0; k < city.regions.length; k++) {
@@ -402,7 +402,7 @@
       if (CM.Milestones) CM.Milestones.onReclaim(this, r);
     }
     const before = city.roadsBuilt.slice();
-    if (city.applyRoads(y)) {
+    if (city.applyRoads(yr)) {
       roadsChanged = true;
       const told = new Set();
       city.roadGroups.forEach((r, k) => {

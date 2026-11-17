@@ -64,6 +64,15 @@
   Renderer.prototype.hubModels = function (city, yr) {
     const Fac = CM.Fac, out = [];
     if (!Fac || !D.facilities) return out;
+    // Explicit airport footprints stay at their actual coordinates. They are
+    // display models; facility demand continues to use the separate hub data.
+    for (const terminal of (D.airportLayout && D.airportLayout.terminals) || []) {
+      const building = yr < terminal.from;
+      if (building && (terminal.construction == null || yr < terminal.construction)) continue;
+      const id = 'apt_' + terminal.id + (building ? '_construction' : '');
+      out.push({ id, x: terminal.x, y: terminal.y,
+        lm: Object.assign({}, terminal, { id, underConstruction: building, h: building ? 6 : terminal.h }) });
+    }
     const nearRail = function (x, y) {
       let best = 3.2, res = null;   // 设施点距铁路 800 m 内时站房贴着铁路建
       for (const r of CM.Geo.rail || []) {
@@ -80,7 +89,7 @@
     // 机场用地：运营中的机场格，或交通枢纽区域（如香港国际机场）内的陆地
     const isAirC = function (c) { return c >= 0 && (city.lu[c] === LU.AIRPORT || (city.regions[city.region[c]].hub && city.landFrac[c] >= 0.5)); };
     for (const f of Fac.list(city)) {
-      if ((f.t !== 'rail' && f.t !== 'air') || f.lmK >= 0 || f.ext || !Fac.active(f, yr, city)) continue;
+      if ((f.t !== 'rail' && f.t !== 'air') || f.lmK >= 0 || f.ext || f.noModel || !Fac.active(f, yr, city)) continue;
       if (f.t === 'rail') {
         const r = nearRail(f.x, f.y);
         if (r) {
@@ -209,11 +218,14 @@
     const st = this._facm;
     if (st && st.key === key && st.city === city) return st;
     const list = this.facModels(city, yr), byId = new Map(), cells = new Set();
-    const hubs = this.hubModels(city, yr), airs = hubs.filter(function (h) { return h.lm.kind === 'airport'; }), airKey = airs.map(function (h) { return h.id + '@' + h.x.toFixed(2) + ',' + h.y.toFixed(2); }).join('|');
+    const hubs = this.hubModels(city, yr), airs = hubs.filter(function (h) { return h.lm.kind === 'airport' || h.lm.kind === 'airportTerminal'; }), airKey = airs.map(function (h) { return h.id + '@' + h.x.toFixed(2) + ',' + h.y.toFixed(2); }).join('|');
     if (st && st.city === city && st.airKey !== airKey) for (const h of airs.concat(st.airs)) { const s = Math.max(h.lm.w, h.lm.d); for (const c of this._facFoot(h.x, h.y, s, s)) city.dirty.add(c); }   // 机场平面画在地面块里
     for (const it of list) {
       byId.set(it.fac, it);
       for (const c of this._facFoot(it.x, it.y, it.lm.w, it.lm.d)) cells.add(c);
+    }
+    for (const field of (D.airportLayout && D.airportLayout.fields) || []) if (yr >= field.from) {
+      for (const c of field.cells) cells.add(c);
     }
     const same = st && st.city === city && st.list.length === list.length && list.every(function (it, k) { return st.list[k] === it; });
     if (!same) {
@@ -226,6 +238,9 @@
     }
     // 不种树的格：运营中的跑道两侧约 220 m 与机场模型的停机坪范围
     const noTree = new Set(), CMM = CFG.CELL_M, rwy = this.runwaySeg(city);
+    for (const field of (D.airportLayout && D.airportLayout.fields) || []) if (yr >= field.from) {
+      for (const c of field.cells) noTree.add(c);
+    }
     // 其他机场（D.runways）：启用后的跑道两侧，以及交通枢纽区域（机场岛）全部不种树；跑道启用时所在地面块重画
     const runs = (D.runways || []).filter(function (r) { return yr >= r.from; }), runKey = runs.length;
     const segCells = function (r, rad, fn) { const x0 = Math.floor(Math.min(r.a[0], r.b[0]) - rad), x1 = Math.ceil(Math.max(r.a[0], r.b[0]) + rad), y0 = Math.floor(Math.min(r.a[1], r.b[1]) - rad), y1 = Math.ceil(Math.max(r.a[1], r.b[1]) + rad); for (let j = Math.max(0, y0); j < Math.min(city.H, y1); j++) for (let i = Math.max(0, x0); i < Math.min(city.W, x1); i++) if (U.distToSeg(i + 0.5, j + 0.5, r.a[0], r.a[1], r.b[0], r.b[1]) < rad) fn(j * city.W + i); };

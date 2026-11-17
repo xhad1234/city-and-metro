@@ -1046,7 +1046,7 @@
     const f = Fac.byId(id); if (!f) return null;
     const el = h('div');
     const yr = g.year(), k = model.facIndex(id), active = k >= 0;
-    const status = active ? '运营中' : (yr < f.open ? Math.floor(f.open) + ' 年启用' : (f.close != null && yr >= f.close ? '已停用（' + Math.floor(f.close) + ' 年）' : '暂未运营'));
+    const status = f.ext && f.ext.planned ? (active ? '模拟接驳运营中' : Math.floor(f.open) + ' 年起模拟接驳') : active ? '运营中' : (yr < f.open ? Math.floor(f.open) + ' 年启用' : (f.close != null && yr >= f.close ? '已停用（' + Math.floor(f.close) + ' 年）' : '暂未运营'));
     el.appendChild(h('div', { class: 'row', style: { flexWrap: 'wrap', marginBottom: '8px' } },
       h('span', { class: 'tag' }, ic(f.T.icon), ' ', f.ext && f.ext.gate ? '口岸' : f.T.name), f.ext ? h('span', { class: 'tag info' }, f.ext.gate ? (CM.DATA.cityLink ? '城市连接 · 接驳口' : '跨境接驳口') : '地图外 · 边缘接驳口') : null, h('span', { class: 'tag' }, Fac.purposeText(f)), h('span', { class: 'tag ' + (active ? 'good' : 'warn') }, status),
       Fac.sources(f).map(function (s) { return h('span', { class: 'tag ' + s[1] }, s[0]); })));

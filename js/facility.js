@@ -123,7 +123,7 @@
       const T = TYPES[s.t]; if (!T) return;
       const f = { k: out.length, id: s.id || ('f' + i), name: s.n, label: s.label || s.n, t: s.t, T: T, x: 0, y: 0, r: s.r != null ? s.r : T.r, lmK: -1,
         open: null, close: yrOf(s.y1), w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
-        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null } : null, rw: s.rw || null, noModel: !!s.noModel,
+        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null, planned: !!s.interfacePlan } : null, rw: s.rw || null, noModel: !!s.noModel,
         regionGate: !!s.regionGate };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });

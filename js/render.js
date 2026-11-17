@@ -118,7 +118,7 @@
     this.stop();
     try {
       const cores = navigator.hardwareConcurrency || 2, n = (navigator.deviceMemory <= 4 || matchMedia('(pointer:coarse)').matches) ? 1 : cores >= 8 ? 2 : 1, id = CM.mapId, mp = CM.curMap ? CM.curMap() : null;
-      const data = { landmarks: D.landmarks, runways: D.runways, airport: D.airport, reclaim: (D.reclaim || []).map(function (r) { return { id: r.id, year: r.year, name: r.name }; }), hsrYear: D.hsrYear, populationStyle: D.populationStyle };
+      const data = { landmarks: D.landmarks, runways: D.runways, airport: D.airport, airportLayout: D.airportLayout, reclaim: (D.reclaim || []).map(function (r) { return { id: r.id, year: r.year, name: r.name }; }), hsrYear: D.hsrYear, populationStyle: D.populationStyle };
       const msg = { type: 'map', data: data, cfg: { W: CFG.W, H: CFG.H, START: CFG.START }, region: mp ? mp.region : null, geoId: id, geoFile: GEO_FILES[id] ? 'geo_' + id + '.js' : null, geo: GEO_FILES[id] ? null : CM.GEO };
       this.list = [];
       for (let i = 0; i < n; i++) {
@@ -940,6 +940,16 @@
     for (const f of Geo.parks) if (inBox(f.bbox, 0.5)) pp.addPath(this.featurePath(f, true));
     ctx.fillStyle = GROUND.park; ctx.fill(pp, 'nonzero');
     if (lvl >= 16) { ctx.strokeStyle = GROUND.parkEdge; ctx.lineWidth = px * 1.2; ctx.stroke(pp); }
+    // Actual airport land and aprons; terminal footprints are drawn after roads.
+    const airportYear = g.clock.y + ((g.clock.m || 1) - 1) / 12;
+    if (D.airportLayout) for (const [list, color] of [[D.airportLayout.fields, GROUND.airport], [D.airportLayout.aprons, GROUND.apron]]) {
+      ctx.fillStyle = color;
+      for (const site of list) if (airportYear >= site.from && inBox(site.bbox, 0)) {
+        ctx.beginPath();
+        for (const ring of site.polygons) { ring.forEach((p, k) => k ? ctx.lineTo(p[0], p[1]) : ctx.moveTo(p[0], p[1])); ctx.closePath(); }
+        ctx.fill('evenodd');
+      }
+    }
     // 旧机场跑道
     const ab = city.airportBox;
     let rw = D.airport && D.airport.runway;
@@ -1172,6 +1182,13 @@
     const ngon = function (cu, cv, r, n, rot, rv) { const o = []; for (let k = 0; k < n; k++) { const t = k / n * Math.PI * 2 + (rot || 0); o.push(T(cu + Math.cos(t) * r, cv + Math.sin(t) * (rv == null ? r : rv))); } return o; };
     const lawn = N ? '#1f3a28' : '#cfe4bf', plaza = N ? '#2c3340' : '#ece6da', bld = F.fill;
     switch (lm.kind) {
+      case 'airportTerminal':
+        ctx.fillStyle = lm.underConstruction ? (N ? '#544839' : '#e2cfaf') : (N ? '#50677e' : '#d4e2ed');
+        ctx.strokeStyle = lm.underConstruction ? (N ? '#b29a70' : '#ad8242') : (N ? '#92b1c7' : '#6d8b9e');
+        if (lm.underConstruction) ctx.setLineDash([0.12, 0.07]);
+        for (const ring of lm.outlines) poly(ring, ctx.fillStyle);
+        ctx.setLineDash([]);
+        break;
       case 'campus': ctx.globalAlpha = 0.35; rect(-hw, -hd, hw, hd, lawn, false); ctx.globalAlpha = 1; break; // 校园内建筑由街区生成，此处只铺草地底色
       case 'memorial': case 'hall':
         rect(-hw, -hd, hw, hd, lawn, false);
@@ -1709,6 +1726,13 @@
   // 地标精细模型：局部坐标为米（u 向东、v 向南，绕场地中心旋转 rot 度），高度为米
   Renderer.prototype.isoLandmark = function (ctx, pj, lm, s) {
     if (CM.Sites.complex(lm)) return this.drawComplexSite(ctx, pj, lm, s, false);
+    if (lm.kind === 'airportTerminal') {
+      const night = TH.night, height = (lm.h || 24) * EX * 1.2;
+      const wall = lm.underConstruction ? (night ? [105, 87, 63] : [178, 151, 112]) : (night ? [68, 88, 111] : [150, 176, 195]);
+      const roof = lm.underConstruction ? (night ? [132, 112, 80] : [221, 202, 165]) : (night ? [105, 136, 160] : [222, 235, 244]);
+      for (const ring of lm.outlines) prism(ctx, pj, ring, 0, height, wall, roof);
+      return;
+    }
     const N = TH.night, CMM = CFG.CELL_M, kind = lm.kind, detail = s >= 16;
     const L = N ? ctx : null;
     const ang = (lm.rot || 0) * Math.PI / 180, ca = Math.cos(ang), sa = Math.sin(ang);
@@ -2673,7 +2697,7 @@
   Renderer.prototype.buildHeat = function () {
     const g = this.game, city = g.city, model = g.model, W = city.W, H = city.H, LO = this.layerOpt, lay = this.layer;
     const access = lay === 'cover' || lay === 'gap' ? model.net : null;
-    const dyn = lay === 'fac' || lay === 'gap' || lay === 'flow' || lay === 'mshare';
+    const dyn = lay === 'fac' || lay === 'gap' || lay === 'commute' || lay === 'mshare';
     const key = this.themeName + ':' + AX.flag() + ':' + lay + ':' + city.version + ':' + g.clock.y + ':' + g.clock.m + ':' + (lay === 'cover' ? g.netVersion + ':' + LO.cover : '') + (lay === 'fac' ? LO.facP + ':' + LO.facDt : '') + (lay === 'gap' ? LO.gapDt + ':' + g.netVersion : '') + (lay === 'mshare' ? LO.shareDt : '') + (lay === 'dev' ? LO.devK + ':' + LO.devB + ':' + (g.eraBase ? g.eraBase.id : '') + (LO.devK === 'pull' ? ':' + g.netVersion + ':' + (model.dailyStale ? 0 : model.version) : '') : '') + (dyn ? ':' + model.cycles + ':' + (model.settled ? 's' : '') : '');
     const old = this.heatLayers.get(lay);
     if (old && old.key === key && old.access === access) { this.heat = old.cv; this.heatKey = key; return; }
@@ -2713,17 +2737,18 @@
     }
     // 通勤时间、乘地铁比例：按片区算比率，再在片区中心之间双线性插值；出行很少的片区不参与（比率没有意义）
     let rateAt = null, rateScale = null;
-    if (lay === 'flow' || lay === 'mshare') {
+    if (lay === 'commute' || lay === 'mshare') {
       const Z = model.Z, ZS = CFG.ZONE, zw = W / ZS, zh = H / ZS, zv = new Float32Array(Z).fill(-1), P0 = model.resultsFor('wd').per[0];
-      if (lay === 'flow') { if (P0.zCW) for (let z = 0; z < Z; z++) if (P0.zCW[z] > 5) zv[z] = P0.zCT[z] / P0.zCW[z]; }
+      if (lay === 'commute') { if (P0.zCW) for (let z = 0; z < Z; z++) if (P0.zCW[z] > 5) zv[z] = P0.zCT[z] / P0.zCW[z]; }
       else if (fd) for (let z = 0; z < Z; z++) if (fd.trips[z] > 300) zv[z] = fd.metro[z] / fd.trips[z];
       const vals = []; let wSum = 0;
-      for (let z = 0; z < Z; z++) if (zv[z] >= 0) { const w = lay === 'flow' ? P0.zCW[z] : fd.trips[z]; vals.push([zv[z], w]); wSum += w; }
+      for (let z = 0; z < Z; z++) if (zv[z] >= 0) { const w = lay === 'commute' ? P0.zCW[z] : fd.trips[z]; vals.push([zv[z], w]); wSum += w; }
       vals.sort(function (a, b) { return a[0] - b[0]; });
       const at = function (q) { let c = 0; for (const e of vals) { c += e[1]; if (c >= wSum * q) return e[0]; } return vals.length ? vals[vals.length - 1][0] : 0; };
-      if (lay === 'flow') { const lo = Math.floor(at(0.1)), hi = Math.max(lo + 8, Math.ceil(at(0.9))); rateScale = { lo: lo, hi: hi }; }
+      if (lay === 'commute') { const lo = Math.floor(at(0.1)), hi = Math.max(lo + 8, Math.ceil(at(0.9))); rateScale = { lo: lo, hi: hi }; }
       else rateScale = { lo: 0, hi: Math.max(0.05, Math.ceil(at(0.95) * 20) / 20) };
       rateAt = function (x, y) {
+        if (lay === 'commute' && zv[Math.floor(y / ZS) * zw + Math.floor(x / ZS)] < 0) return -1;
         const fx = U.clamp((x + 0.5) / ZS - 0.5, 0, zw - 1), fy = U.clamp((y + 0.5) / ZS - 0.5, 0, zh - 1), x0 = Math.floor(fx), y0 = Math.floor(fy), x1 = Math.min(zw - 1, x0 + 1), y1 = Math.min(zh - 1, y0 + 1), tx = fx - x0, ty = fy - y0;
         let sum = 0, wt = 0;
         const add = function (i, j, w) { const v = zv[j * zw + i]; if (v >= 0) { sum += v * w; wt += w; } };
@@ -2782,7 +2807,7 @@
       } else if (rateAt) {
         if (p + jb > 300 && city.lu[c] !== CM.LU.WATER) {
           const x = c % W, v = rateAt(x, (c - x) / W);
-          if (v >= 0 && lay === 'flow') { col = AX.ramp([[0, [64, 170, 120]], [0.5, [245, 200, 80]], [1, [205, 50, 50]]], U.clamp((v - rateScale.lo) / (rateScale.hi - rateScale.lo), 0, 1)); a = U.clamp(0.28 + Math.sqrt((p + jb) / 90000) * 0.3, 0, 0.55); }
+          if (v >= 0 && lay === 'commute') { col = AX.ramp([[0, [64, 170, 120]], [0.5, [245, 200, 80]], [1, [205, 50, 50]]], U.clamp((v - rateScale.lo) / (rateScale.hi - rateScale.lo), 0, 1)); a = U.clamp(0.28 + Math.sqrt((p + jb) / 90000) * 0.3, 0, 0.55); }
           else if (v >= 0) { const t = U.clamp(v / rateScale.hi, 0, 1); col = AX.ramp([[0, [214, 232, 245]], [0.5, [90, 160, 220]], [1, [20, 70, 159]]], t); a = 0.16 + 0.42 * t; }
         }
       } else if (lay === 'pop') {
@@ -2931,7 +2956,7 @@
     ctx.globalAlpha = 1;
     // ---- 图层（地面） ----
     const layerOn = this.layer !== 'none';
-    if (layerOn && ['pop', 'jobs', 'cover', 'region', 'fac', 'gap', 'dev', 'flow', 'mshare'].indexOf(this.layer) >= 0) {
+    if (layerOn && ['pop', 'jobs', 'cover', 'region', 'fac', 'gap', 'dev', 'commute', 'mshare'].indexOf(this.layer) >= 0) {
       this.buildHeat();
       setWorld();
       ctx.imageSmoothingEnabled = true;
@@ -3449,7 +3474,7 @@
     const v = this.view;
     const sel = ui ? ui.selection : null;
     const hlLine = ui && ui.highlightLine;
-    const lyrDim = this.layer === 'cong' || this.layer === 'flow' ? 1 - 0.65 * (this.layerFade || 0) : 1;   // 拥堵、出行方向图层下淡化地铁
+    const lyrDim = this.layer === 'cong' || this.layer === 'flow' || this.layer === 'commute' ? 1 - 0.65 * (this.layerFade || 0) : 1;
     ctx.lineJoin = 'round'; ctx.lineCap = 'round';
     if (!this.segPx) this.segPx = new SegPx(this);
     // 草案中被删除的正式轨道（虚影）
@@ -4493,6 +4518,16 @@
     ctx.save(); ctx.translate(x, y); ctx.rotate(Math.atan2(dy, dx) + Math.PI / 2); ctx.scale(size / 24, size / 24); ctx.translate(-12, -12.6);
     ctx.fillStyle = color; ctx.fill(PLANE); ctx.restore();
   }
+  function railPortalIcon(ctx, x, y, size, color) {
+    ctx.save(); ctx.translate(x, y); ctx.scale(size / 24, size / 24);
+    ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    roundRect(ctx, -7, -9, 14, 15, 3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-6, -1); ctx.lineTo(6, -1); ctx.moveTo(0, -8); ctx.lineTo(0, -1);
+    ctx.moveTo(-4, 6); ctx.lineTo(-6, 9); ctx.moveTo(4, 6); ctx.lineTo(6, 9); ctx.stroke();
+    ctx.fillStyle = color;
+    for (const dx of [-4, 4]) { ctx.beginPath(); ctx.arc(dx, 3, 1, 0, Math.PI * 2); ctx.fill(); }
+    ctx.restore();
+  }
   function roundRect(ctx, x, y, w, h, r) { ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath(); }
   // 接驳口的屏幕几何：边缘点 e（接驳口所在）、该处地图边界的外法向 n、指向设施的方向 (dx, dy)
   Renderer.prototype.gateGeom = function (f) {
@@ -4500,7 +4535,7 @@
     const e = this.P(P0.ex, P0.ey, 0, {}), q = this.P(P0.ex + v[0], P0.ey + v[1], 0, {});
     let dx = q.x - e.x, dy = q.y - e.y, L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
     // 城市连接的接驳口在地图中间：提示朝对岸方向摆放
-    const wn = f.ext.gate ? [Math.round(v[0]) || 0, Math.round(v[1]) || 1] : P0.ex <= 1e-6 ? [-1, 0] : P0.ex >= CFG.W - 1e-6 ? [1, 0] : P0.ey <= 1e-6 ? [0, -1] : [0, 1];
+    const wn = f.ext.gate || f.ext.edge ? [v[0], v[1]] : P0.ex <= 1e-6 ? [-1, 0] : P0.ex >= CFG.W - 1e-6 ? [1, 0] : P0.ey <= 1e-6 ? [0, -1] : [0, 1];
     const m = this.P(P0.ex + wn[0], P0.ey + wn[1], 0, {}), t = this.P(P0.ex + wn[1], P0.ey + wn[0], 0, {});
     let nx = m.x - e.x, ny = m.y - e.y; L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
     // o：画面上垂直于边缘线、指向地图外的方向（立体视图中与 n 不同），用来保证提示整块落在边缘线外
@@ -4537,6 +4572,7 @@
     ctx.beginPath(); ctx.arc(c.bx, c.by, c.gr, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
     if (dim) { ctx.fillStyle = TH.night ? 'rgba(24,34,50,0.35)' : 'rgba(255,255,255,0.35)'; ctx.fill(); }
     if (c.gate) biArrow(ctx, c.bx, c.by, 1, 0, c.gr * .7, '#ffffff', col);
+    else if (c.rail) railPortalIcon(ctx, c.bx, c.by, c.gr * 1.4, '#ffffff');
     else planeIcon(ctx, c.bx, c.by, G.dx, G.dy, c.gr * 1.25, '#ffffff');
     if (c.title) {
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
@@ -4575,9 +4611,12 @@
       const L = lk ? net.lines[lk.lines[0]] : null, col = L ? AX.line(L) : (active ? accent : grey);
       const km = f.ext.km + ' km', labels = z >= 6 && this.labelsOn;
       const sub = f.ext.gate ? (lk ? '已接通 ⇄ ' + (f.ext.to || '对岸') : '线路修到这里即接通' + (f.ext.to ? ' ' + f.ext.to : ''))
-        : !active ? (f.open > yr ? Math.floor(f.open) + ' 年启用 · 地图外 ' + km : '已停用') : lk ? '已接通 ⇄ ' + (lk.portal ? '接驳口' : '经「' + lk.st.name + '」') : '地图外 ' + km + ' · 线路修到边缘即接通';
+        : !active ? (f.open > yr ? (f.ext.planned ? '规划接口 · ' + Math.floor(f.open) + ' 年起模拟接驳' : Math.floor(f.open) + ' 年启用 · 地图外 ' + km) : '已停用')
+          : lk ? (f.ext.planned ? '模拟接驳 · ' : '') + '已接通 ⇄ ' + (lk.portal ? '接驳口' : '经「' + lk.st.name + '」')
+            : (f.ext.planned ? '规划情景 · ' : '') + '地图外 ' + km + ' · 线路修到接口即接通';
       const card = this.gateCard(ctx, G, gr, labels ? Fac.shortName(f) : '', labels ? sub : '');
       card.gate = f.ext.gate;
+      card.rail = f.t === 'rail';
       this._portals.push({ f: f, sx: e.x, sy: e.y, card: card });
       ctx.save();
       ctx.globalAlpha = opacity * (active ? 1 : 0.75);
@@ -4631,7 +4670,8 @@
     ctx.lineWidth = 6; ctx.strokeStyle = TH.halo; ctx.stroke();
     ctx.fillStyle = fill; ctx.fill();
     ctx.lineWidth = 3; ctx.strokeStyle = ring; ctx.stroke();
-    planeIcon(ctx, gx, gy, G.dx, G.dy, Math.min(r * 1.25, 26), TH.night ? '#ffffff' : '#1d2b40');
+    if (f.t === 'rail') railPortalIcon(ctx, gx, gy, Math.min(r * 1.4, 28), TH.night ? '#ffffff' : '#1d2b40');
+    else planeIcon(ctx, gx, gy, G.dx, G.dy, Math.min(r * 1.25, 26), TH.night ? '#ffffff' : '#1d2b40');
     if (lk) biArrow(ctx, e.x, e.y, n.x, n.y, 8, ring, TH.halo);
     ctx.restore();
     return { x: gx, y: gy, r: r };

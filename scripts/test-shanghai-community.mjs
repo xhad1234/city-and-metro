@@ -57,6 +57,10 @@ check('临港', 30.9165, 121.9060, 'lingang', beforeFar, afterFar);
 check('崇明岛', 31.6234, 121.3960, 'chongming', beforeFar, afterFar);
 check('长兴岛', 31.3931, 121.7179, 'changxing', beforeFar, afterFar);
 check('横沙岛', 31.3423, 121.8441, 'hengsha', beforeFar, afterFar);
+check('昆山花桥', 31.301946, 121.100839, 'huaqiao', beforeFar, afterFar);
+const outsideHuaqiao = city.cellAt(...point(31.30, 121.025));
+assert.equal(afterFar[outsideHuaqiao], 1, 'Kunshan outside Huaqiao stays outside the buildable map');
+assert.equal(city.pop[outsideHuaqiao], 0);
 const out = city.cellAt(...point(31.51, 121.25));
 assert.equal(afterFar[out], 1, 'Jiangsu remains outside the buildable area');
 assert.equal(city.pop[out], 0, 'Land outside Shanghai contributes no city population');
@@ -71,6 +75,17 @@ assert.equal(listed.some(f => f.gen), false, 'Shanghai uses named sites througho
 const named = DATA.facilities.filter(f => f.fixedSite);
 for (const s of named) {
   const f = facility(s.id), c = city.cellAt(f.x, f.y);
+  if (s.ext) {
+    const p = Fac.portal(f);
+    assert.ok(p.x >= 0 && p.y >= 0 && p.x < city.W && p.y < city.H, s.id + ' interface within grid');
+    assert.equal(p.ex, s.extEdge[0]); assert.equal(p.ey, s.extEdge[1]);
+    assert.equal(f.ext.gate, false, 'Regional railway interfaces are not border-control gates');
+    assert.ok(Fac.extNear(f, { x: p.x, y: p.y }) >= 0);
+    assert.equal(Fac.extLink(f, { compiled: { stations: [], serviced: [] } }), null);
+    const st = { id: 'interface-test', x: p.x, y: p.y, portal: f.id };
+    assert.ok(Fac.extLink(f, { compiled: { stations: [st], serviced: [1], stationLines: [new Set(['line'])] } }).portal);
+    continue;
+  }
   assert.ok(c >= 0 && city.landFrac[c] >= 0.5 && !afterFar[c], s.id + ' must be inside real, buildable Shanghai land');
   assert.ok(s.note, s.id + ' must explain the location');
 }
@@ -129,12 +144,26 @@ for (const task of modern) {
   }
 }
 console.log('PASS 2021–2045 task dates, facility timing and map anchors');
+const development = DATA.events.find(e => e.title === '开发崇明：生态岛交通建设');
+assert.equal(development.y, 2025); assert.equal(development.m, 1);
+assert.equal(DATA.histTasks.filter(t => t.id.startsWith('sh-chongming-') && t.appear[0] === 2025).length, 2);
+for (const id of ['chongming', 'changxing', 'huaqiao']) {
+  const k = city.regions.findIndex(r => r.id === id);
+  assert.equal(Eras.regionFactors(city, 2024).pop[k], 1);
+  assert.equal(Eras.regionFactors(city, 2025).pop[k], 1.25);
+  assert.ok(Math.abs(Eras.regionFactors(city, 2025).jobs[k] - 1.35) < 1e-6);
+  assert.equal(Eras.regionFactors(city, 2037).pop[k], 1);
+}
+assert.equal(DATA.facilities.filter(f => f.extEdge && f.t === 'rail').length, 6);
+console.log('PASS 2025 development effects and connectable regional railway interfaces');
 
 // Census controls apply throughout complete towns, independently of the old
 // rectangular map extent; upgrade once and preserve totals and metro land.
 const census = DATA.population, grid = CM.U.unpackTyped(census.townGrid);
-assert.equal(census.groups.reduce((a, r) => a + r[2], 0), 24_870_895);
-assert.equal(new Set(census.groups.map(r => r[0])).size, 16);
+assert.equal(census.groups.reduce((a, r) => a + r[2], 0), 25_056_111);
+assert.equal(census.groups.filter(r => r[0] !== '昆山市').reduce((a, r) => a + r[2], 0), 24_870_895);
+assert.equal(new Set(census.groups.map(r => r[0])).size, 17);
+assert.equal(census.groups.find(r => r[1] === '花桥镇')[2], 185_216);
 const townTotals = () => {
   const sums = new Float64Array(census.groups.length);
   for (let c = 0; c < city.N; c++) if (grid[c]) sums[grid[c] - 1] += city.pop[c];
@@ -211,3 +240,21 @@ assert.equal(access.zl[14], null, 'Limit bicycle trips to 15 minutes of riding')
 assert.equal(access.transfers.length, 0);
 assert.equal(model.computeAccess(compiled).zl[8][0].w, access.zl[8][0].w, 'Cached access tree must give the same result');
 console.log('PASS bicycle access time, service eligibility, ride limit and walk-only reporting');
+
+const terminals = DATA.airportLayout.terminals;
+assert.equal(terminals.find(t => t.id === 'hq_t2').from, 2010 + 2 / 12);
+assert.equal(terminals.find(t => t.id === 'pvg_t3').from, 2028 + 11 / 12);
+assert.equal(Fac.active(facility('sh_pvg_t3'), 2028 + 10 / 12, city), false);
+assert.equal(Fac.active(facility('sh_pvg_t3'), 2028 + 11 / 12, city), true);
+for (const [year, total] of [[2030, 230000], [2040, 290000]]) {
+  assert.ok(Math.abs(Fac.pax(facility('sh_pvg_terminal'), year) + Fac.pax(facility('sh_pvg_t3'), year) - total) < 0.01);
+}
+assert.equal(DATA.runways.filter(r => r.airport === 'pvg').length, 5);
+const cloud = city.roadGroups.findIndex(r => r.name === '云亮路');
+const ramp = city.roadGroups.findIndex(r => r.name === '南纬八路上匝道');
+assert.ok(cloud >= 0 && ramp >= 0);
+city.applyRoads(2026 + 5 / 12); assert.equal(city.roadsBuilt[cloud], 0);
+city.applyRoads(2026 + 6 / 12); assert.equal(city.roadsBuilt[cloud], 1);
+city.applyRoads(2028 + 10 / 12); assert.equal(city.roadsBuilt[ramp], 0);
+city.applyRoads(2028 + 11 / 12); assert.equal(city.roadsBuilt[ramp], 1);
+console.log('PASS actual terminal models, T3 opening, airport total conservation and monthly road phases');

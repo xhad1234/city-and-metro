@@ -28,7 +28,8 @@ for(const [id,m]of Object.entries(C.MAPS)){
   assert.deepEqual(Array.from(p.net.stations.s1.site),[2.5+dx,3.5+dy],'Paid site must move with its station');
   assert.equal(p.net.stations.s1.name,'Custom name');assert.equal(p.net.stations.s1.angle,30);
   assert.deepEqual(Array.from(p.net.segments.g1.pts[0]),[4.5+dx,5.5+dy]);
-  const z=Math.floor((2+dy)/m.cfg.ZONE)*(m.cfg.W/m.cfg.ZONE)+Math.floor((6+dx)/m.cfg.ZONE);assert.equal(p.tasks.active[0].zone,z);assert.equal(p.tasks.active[0].coolKey,'cong:'+z);assert.equal(p.tasks.cool['cov:'+z],20);
+  const oz=e.oldZone||C.MAPS.gz.cfg.ZONE;
+  const z=Math.floor((oz/2+dy)/m.cfg.ZONE)*(m.cfg.W/m.cfg.ZONE)+Math.floor((oz*1.5+dx)/m.cfg.ZONE);assert.equal(p.tasks.active[0].zone,z);assert.equal(p.tasks.active[0].coolKey,'cong:'+z);assert.equal(p.tasks.cool['cov:'+z],20);
   assert.equal(p.tasks.active[0].anchors[0].x,8+dx);assert.equal(p.tasks.active[0].anchors[0].y,9+dy);
   assert.equal(JSON.stringify(p.econ),JSON.stringify(payload.econ));assert.equal(p.mapUpgrade.displayOnly||false,false);assert.equal(p.city.regionIds.length,e.oldRegionIds.length);
   assert.deepEqual(Array.from(p.macro.areaRebase.oldBox),[dx,dy,e.oldW,e.oldH]);
