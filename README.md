@@ -6,7 +6,17 @@
 
 《城市与地铁》是一款在浏览器中游玩的单人地铁规划与城市经营游戏。从第一座车站开始，连接住区、商圈、校园与机场，跨过江河，逐步织出自己的交通网络。城市随年代发展，居民也会根据你的路网重新选择出行方式。
 
-**[在线游玩](https://city-and-metro.pages.dev)** · [源码仓库](https://github.com/VinsonFung/city-and-metro) · [使用许可](./LICENSE.txt)
+**[原版在线游玩](https://city-and-metro.pages.dev)** · [原始仓库](https://github.com/VinsonFung/city-and-metro) · [使用许可](./LICENSE.txt)
+
+## 上海社区修改版
+
+基于 VinsonFung 的网页版 v2.7.2。游玩本版可下载分支，在桌面浏览器打开 `index.html`，或在仓库目录运行 `python3 -m http.server 8000` 后访问本地 8000 端口。
+
+- 上海扩展至全市 16 区，地图为 128 × 140 公里，每格 250 米。原有片区沿用开放时间。新增近郊在 2015 年开放，包括吴泾、嘉定新城、宝山和闵行外围、松江东北、青浦东部、浦东机场及周边。其余远郊在 2020 年开放，包括松江和青浦新城、奉贤、金山、南汇及崇明三岛。市界外陆地只作地理参照。
+- 2021–2026 年为「后疫情时代」，加入五个新城、疫情与恢复、枢纽客流回升、沪苏湖高铁与机场联络线、地铁延伸及崇明线调试。地铁线路由玩家建设。[五个新城政策](https://www.shanghai.gov.cn/nw12344/20210302/6c8561a91a67478899a5eb51aa612d78.html) · [复运公告](https://www.shanghai.gov.cn/nw12344/20220531/7feab162e2f647e2976dab216102bbee.html) · [2023 年客流恢复](https://english.shanghai.gov.cn/en-Latest-WhatsNew/20240103/3f1ebb5a6da2432aa518b73c4eb14983.html) · [2024 年交通工程](https://www.shanghai.gov.cn/nw4411/20250101/7f97e10f1b0f4a6485d44d8fe9e2806e.html) · [2 号线西延伸](https://service.shanghai.gov.cn/SHVideo/videoshow_933E0E51A7DEB228_0.html) · [18 号线二期](https://www.shanghai.gov.cn/nw4411/20251227/b69b7008d2e647f7a3cab7e160ffe225.html) · [崇明线调试](https://www.shanghai.gov.cn/nw31406/20260917/3207a47b34694050b2afbfbccac9959f.html)
+- 2027–2040 年进入「喜迎奥运」。按公布的计划设定上海东站和宝山站，模拟 2030 年获得主办权、2033 年动工、2037–2038 年场馆启用、2039 年测试赛和 2040 年 8 月吴泾奥运会。赛后奥运村转为居住社区。2040 年全市模拟人口基准为 3500 万。[两座枢纽的投运计划](https://www.shanghai.gov.cn/nw4411/20260430/e9961a938b904f89b93178318eebbdb4.html) · [吴泾工业区更新规划](https://www.shanghai.gov.cn/gwk/search/content/9ce0e2a0-ff5a-41c8-9e91-341424340c4c) · [上海七普](https://www.shanghai.gov.cn/nw12344/20210518/001a0cef127c499eb381fa8dc3208e95.html)
+- 交通模型自动比较步行和骑车接驳。骑车速度是步行的 3 倍，每段骑行接驳加 4 分钟，最多骑行 15 分钟（约 3.38 公里）。步行覆盖率仍按步行计算。
+- 上海旧档的站线、资金和进度可迁移到扩图后的坐标。交通小区扩大到 4 × 4 公里，以控制全市客流计算规模。
 
 当前网页版 **v2.7.2** 同步伦敦及 11 款车型、城市特色机制、深圳与香港扩图、深港口岸连接、新版线路图与成长回放、城市总评、超大型车站，以及新版票价和车站批量管理。游戏内分别提供 v2.6、v2.7 两篇更新公告。世界地图、城市转场、城市成就系统和三套可切换线路风格保留为独立版内容。
 

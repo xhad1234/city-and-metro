@@ -20,6 +20,11 @@ license does not add restrictions to rights already granted under ODbL.
 The distributed geographic databases can be obtained from those files in the
 repository or the deployed game; retain attribution and applicable ODbL terms.
 
+The Shanghai community expansion uses OSM extracts distributed by Geofabrik
+(https://download.geofabrik.de/asia/china/shanghai.html), administrative
+relations from the OpenStreetMap API, and OSMCoastline land polygons
+(https://osmdata.openstreetmap.de/data/land-polygons.html), all under ODbL.
+
 本项目预处理的 OpenStreetMap 地理数据库继续按 ODbL 1.0 提供。
 游戏的非商业使用条款不限制该数据库原许可授予的权利。
 本游戏自有代码的许可与地理数据库许可分别适用。
