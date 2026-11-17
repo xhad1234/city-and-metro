@@ -118,7 +118,7 @@
     this.stop();
     try {
       const cores = navigator.hardwareConcurrency || 2, n = (navigator.deviceMemory <= 4 || matchMedia('(pointer:coarse)').matches) ? 1 : cores >= 8 ? 2 : 1, id = CM.mapId, mp = CM.curMap ? CM.curMap() : null;
-      const data = { landmarks: D.landmarks, runways: D.runways, airport: D.airport, reclaim: (D.reclaim || []).map(function (r) { return { id: r.id, year: r.year, name: r.name }; }), hsrYear: D.hsrYear };
+      const data = { landmarks: D.landmarks, runways: D.runways, airport: D.airport, reclaim: (D.reclaim || []).map(function (r) { return { id: r.id, year: r.year, name: r.name }; }), hsrYear: D.hsrYear, populationStyle: D.populationStyle };
       const msg = { type: 'map', data: data, cfg: { W: CFG.W, H: CFG.H, START: CFG.START }, region: mp ? mp.region : null, geoId: id, geoFile: GEO_FILES[id] ? 'geo_' + id + '.js' : null, geo: GEO_FILES[id] ? null : CM.GEO };
       this.list = [];
       for (let i = 0; i < n; i++) {
@@ -880,6 +880,10 @@
         if (L === LU.WATER) col = GROUND.farm[0];
         else if (L === LU.HILL) { col = GROUND.farm[0]; anyHill = true; }   // 山体另行平滑绘制（见下）
         else if (L === LU.AIRPORT) col = GROUND.airport;
+        else if (D.populationStyle && g.clock.y >= D.populationStyle.from && L !== LU.PARK) {
+          const farm = GROUND.farm[Math.floor(U.hash2(i >> 1, j >> 1, 3) * 3)];
+          col = U.rgb(AX.mix(U.hex2rgb(farm), U.hex2rgb(GROUND.urban[L] || GROUND.urban[0]), city.groundUrbanMix(c)));
+        }
         else if (city.street[c] && L !== LU.PARK) col = GROUND.urban[L] || GROUND.urban[0];
         else col = GROUND.farm[Math.floor(U.hash2(i >> 1, j >> 1, 3) * 3)];
         P(col).rect(i - px, j - px, 1 + 2 * px, 1 + 2 * px);
@@ -2695,7 +2699,7 @@
           const mult = LO.facDt === 'we' ? model.weekendMult(model.year)[5] : 1;
           for (let i = 0; i < Z; i++) for (let k = od.start[i]; k < od.start[i + 1]; k++) zv[i] += 2 * t5[k] * mult;
         } else zv = fd.dest.subarray(qi * Z, qi * Z + Z);
-        const cv = this.zoneToCells(zv, this.cellWeights(q), !!D.extentSeam);
+        const cv = this.zoneToCells(zv, this.cellWeights(q), !!D.smoothFacilityHeat);
         for (let c = 0; c < city.N; c++) { facCell[c] += cv[c]; if (cv[c] > best[c]) { best[c] = cv[c]; facDom[c] = qi; } }
       }
     }
@@ -2756,7 +2760,7 @@
       let col = null, a = 0;
       const p = city.pop[c] / 0.0625, jb = city.jobs[c] / 0.0625;
       if (lay === 'fac') {
-        if (facCell) { const v = facCell[c] / 0.0625; if (v > 150) { const t = U.clamp(Math.sqrt(v / 40000), 0, 1); col = U.hex2rgb(AX.category(facDom[c], TR.color[PK[facDom[c]]] || '#888888')); a = (0.1 + 0.42 * t) * (D.extentSeam ? U.clamp((v - 150) / 250, 0, 1) : 1); } }
+        if (facCell) { const v = facCell[c] / 0.0625; if (v > 150) { const t = U.clamp(Math.sqrt(v / 40000), 0, 1); col = U.hex2rgb(AX.category(facDom[c], TR.color[PK[facDom[c]]] || '#888888')); a = (0.1 + 0.42 * t) * (D.smoothFacilityHeat ? U.clamp((v - 150) / 250, 0, 1) : 1); } }
       } else if (lay === 'gap') {
         if (gapCell) { const v = gapCell[c] / 0.0625; if (v > 400) { const t = U.clamp(Math.sqrt(v / 60000), 0, 1); col = AX.ramp([[0, [255, 214, 170]], [0.5, [236, 112, 72]], [1, [180, 24, 34]]], t); a = 0.12 + 0.45 * t; } }
       } else if (lay === 'cover' && LO.cover === 'station') {

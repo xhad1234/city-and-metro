@@ -64,6 +64,9 @@ assert.ok(city.waterDistAt(...point(31.44, 121.74)) < 0, 'Yangtze channels remai
 
 const listed = Fac.list(city);
 const facility = id => listed.find(f => f.id === id);
+assert.equal(listed.some(f => f.t === 'uni' && f.name.includes('大学城')), false);
+assert.equal(facility('sh_qibao_center').t, 'shop');
+assert.equal(listed.filter(f => f.t === 'uni' && /松江/.test(f.name)).length, 6);
 assert.equal(listed.some(f => f.gen), false, 'Shanghai uses named sites throughout the municipality');
 const named = DATA.facilities.filter(f => f.fixedSite);
 for (const s of named) {
@@ -109,9 +112,6 @@ for (const rw of DATA.runways.filter(r => r.from === 2035)) for (let t = 0; t <=
 }
 assert.equal(DATA.runways.filter(r => r.from === 2035).length, 2);
 assert.ok(DATA.events.some(e => e.y === 2035 && e.tag === '模拟' && e.title === '崇明国际机场启用'));
-const stadia = DATA.landmarks.filter(l => l.id.startsWith('sh_oly_'));
-city.activateLandmarks(2038);
-for (const l of stadia) assert.equal(city.landmarkOn[DATA.landmarks.indexOf(l)], 1);
 assert.ok(Fac.share(facility('sh_oly_stadium'), 2040 + 7 / 12) > Fac.share(facility('sh_oly_stadium'), 2039) * 5);
 assert.equal(CM.U.interp(CFG.growth.popCurve, 2040), 35_000_000);
 console.log('PASS Shanghai administrative coverage, release dates, Olympic state and hub dates');
@@ -130,48 +130,51 @@ for (const task of modern) {
 }
 console.log('PASS 2021–2045 task dates, facility timing and map anchors');
 
-// An imported dense strip beside rural land: the discontinuity falls while
-// both citywide totals, protected land and the actual river stay intact.
-const { x: edgeX, y: edgeY, size, band } = DATA.extentSeam;
-const row = edgeY + Math.floor(size / 2);
-city.pop = new Float32Array(city.N);
-city.jobs = new Float32Array(city.N);
-city.street = new Uint8Array(city.N);
-city.urbanYear = new Uint16Array(city.N);
-city.bh = new Float32Array(city.N);
-const seam = Object.create(city);
-seam.crossesRiver = (x0, y0, x1, y1) => y0 < row - 2 && y1 >= row - 2;
-seam.lu = new Uint8Array(city.N);
-seam.plan = new Uint8Array(city.N).fill(CM.LU.RES);
-seam.landFrac = new Float32Array(city.N).fill(1);
-seam.isPark = new Uint8Array(city.N);
-seam.region = new Uint8Array(city.N).fill(city.regions.findIndex(r => r.id === 'outer'));
-seam.protectedId = new Uint8Array(city.N);
-seam.taken = new Float32Array(city.N);
-for (let y = row - 2; y <= row + 2; y++) for (let x = edgeX - band - 1; x < edgeX + band; x++) {
-  const c = y * seam.W + x;
-  seam.pop[c] = x < edgeX ? 50 : 500;
-  seam.jobs[c] = x < edgeX ? 10 : 100;
+// Census controls apply throughout complete towns, independently of the old
+// rectangular map extent; upgrade once and preserve totals and metro land.
+const census = DATA.population, grid = CM.U.unpackTyped(census.townGrid);
+assert.equal(census.groups.reduce((a, r) => a + r[2], 0), 24_870_895);
+assert.equal(new Set(census.groups.map(r => r[0])).size, 16);
+const townTotals = () => {
+  const sums = new Float64Array(census.groups.length);
+  for (let c = 0; c < city.N; c++) if (grid[c]) sums[grid[c] - 1] += city.pop[c];
+  return sums;
+};
+const total = city.totals(), sums = townTotals();
+for (let k = 0; k < sums.length; k++) {
+  const target = total.pop * census.groups[k][2] / census.total;
+  assert.ok(Math.abs(sums[k] - target) < 0.05, census.groups[k][1] + ' census share');
 }
-const center = row * seam.W + edgeX, park = center + seam.W + 3, water = center + 2 * seam.W;
-seam.isPark[park] = 1;
-seam.pop[park] = seam.jobs[park] = 0;
-seam.landFrac[water] = 0;
-seam.pop[water] = seam.jobs[water] = 0;
-const before = seam.totals();
-seam.extentReconciled = false;
-seam.reconcileExtent(2021);
-assert.ok(Math.abs(seam.totals().pop - before.pop) < 0.01);
-assert.ok(Math.abs(seam.totals().jobs - before.jobs) < 0.01);
-assert.ok(Math.abs(seam.pop[center] - seam.pop[center - 1]) < 150);
-assert.equal(seam.pop[park], 0);
-assert.equal(seam.pop[water], 0);
-assert.equal(seam.pop[center - band - 1], 50);
-const after = seam.pop[center];
-seam.reconcileExtent(2021);
-assert.equal(seam.pop[center], after);
-console.log('PASS saved map density transition conserves totals and respects water and parks');
+assert.ok(Math.abs(total.pop - 24_870_900) < 2);
+assert.equal(city.populationRevision, census.revision);
+const state = city.serialize();
+assert.equal(state.populationRevision, census.revision);
+assert.equal(city.applyPopulationDistribution(2021), false);
+assert.deepEqual(city.totals(), total);
+const qibao = census.groups.findIndex(r => r[1] === '七宝镇');
+const xujing = census.groups.findIndex(r => r[1] === '徐泾镇');
+assert.equal(census.groups[qibao][2], 266465);
+assert.equal(census.groups[xujing][2], 198376);
+const urbanCell = city.cellAt(...point(31.15648, 121.34593));
+const fraction = city.groundUrbanMix(urbanCell);
+city.street[urbanCell] = 1 - city.street[urbanCell];
+assert.equal(city.groundUrbanMix(urbanCell), fraction, 'Colour must not depend on saved street flag');
+city.street[urbanCell] = 1 - city.street[urbanCell];
+const oldPop = city.pop.slice(), oldJobs = city.jobs.slice(), oldTaken = city.taken.slice();
+city.populationRevision = 0;
+city.applyPopulationDistribution(2021);
+assert.ok(Math.abs(city.totals().pop - total.pop) < 1);
+assert.ok(Math.abs(city.totals().jobs - total.jobs) < 1);
+assert.deepEqual(city.taken, oldTaken);
+for (let c = 0; c < city.N; c++) {
+  if (city.lu[c] === CM.LU.WATER || city.lu[c] === CM.LU.PARK || city.lu[c] === CM.LU.AIRPORT)
+    assert.equal(city.pop[c], 0, 'No residents on water, parks or airport runways');
+}
+console.log('PASS town population shares, one-time save calibration and ground-colour consistency');
 
+const stadia = DATA.landmarks.filter(l => l.id.startsWith('sh_oly_'));
+city.activateLandmarks(2038);
+for (const l of stadia) assert.equal(city.landmarkOn[DATA.landmarks.indexOf(l)], 1);
 const width = 24;
 const vertexWidth = width + 1;
 const counts = new Int32Array(vertexWidth * 2);

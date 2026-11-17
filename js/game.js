@@ -1035,6 +1035,11 @@
           '存档已升级到 v' + CFG.GAME_VERSION + ' 交通模型（升级前的原存档已另存为「升级前备份」，可在存档列表中载入或导出）') + (s.__mapMigratedFrom ? '；地图范围同时扩展' : '');
       } else g.traffic = Object.assign({ v: CFG.TRAFFIC_MODEL }, s.traffic);
       if (s.mapUpgrade && !s.mapUpgrade.displayOnly) g.traffic.until = Math.max(g.traffic.until || 0, g.ym() + 1);
+      if (D.population && g.city.populationRevision > (s.city.populationRevision || 0)) {
+        g.traffic.until = Math.max(g.traffic.until || 0, g.ym() + 1);
+        g.logEvent({ tag: '版本', title: '按街镇普查分布更新人口',
+          desc: '按 2020 年七普的街镇比例和住宅用地重新分配当前人口，保留全市人口、岗位总量和全部站线。之后继续按本局规则增长。更新当月提供任务与满意度保护。' });
+      }
       if (rulesUpgrade) {
         g.backupFailed = s.__backupFailed || null;
         g.traffic.until = Math.max(g.traffic.until || 0, g.ym() + 1);

@@ -43,7 +43,7 @@
   City.prototype.generateGen = function* (seed, startYear, opts) {
     const W = this.W, H = this.H, N = this.N, ds = (opts && opts.densityScale) || 1;
     this.seed = seed;
-    this.extentReconciled = true;
+    this.populationRevision = 0;
     this.regions = D.regions.concat([D.defaultRegion]);
     for (const r of this.regions) if (r.plan0) r.plan = r.plan0;   // 上一局改变过的片区规划（applyReplan）恢复原样
     this.regionOpen = new Uint8Array(this.regions.length);
@@ -114,6 +114,7 @@
     }
     const tP = U.interp(CFG.growth.popCurve, startYear), tJ = tP * U.interp(CFG.growth.jobsRatio, startYear);
     for (let c = 0; c < N; c++) { this.pop[c] *= tP / sumP; this.jobs[c] *= tJ / sumJ; }
+    this.applyPopulationDistribution(startYear);
     for (let c = 0; c < N; c++) this.bh[c] = this.heightFor(c, startYear);
     yield;
 
@@ -1519,6 +1520,7 @@
   // 长期人口仍回到本城的人口曲线；地铁覆盖对人口的吸引（boost）不经过经济系数，避免重复计算
   City.prototype.growMonth = function (ctx) {
     const N = this.N, W = this.W, year = ctx.year;
+    const recalibrated = this.applyPopulationDistribution(year);
     const tot = this.totals();
     const E = ctx.econ || null, egp = E ? E.popGrowth : 1, ejf = E ? E.jobs : 1, ecom = E ? E.com : 1;
     const boost = 1 + CFG.growth.metroBoostMax * U.clamp((ctx.coverage || 0) / 0.5, 0, 1);
@@ -1622,6 +1624,7 @@
       const nh = this.heightFor(c, year);
       if (nh > this.bh[c] * 1.12 + 1) { if (nh - this.bh[c] >= 6) sites.set(c, mi); this.bh[c] = nh; this.dirty.add(c); }
     }
+    streetsChanged = streetsChanged || recalibrated;
     if (streetsChanged) { this.updateStreets(); }
     if (changed.length) this.version++;
     return { dPop: dP, dJobs: dJ, newUrban: newUrban, streetsChanged: streetsChanged };
@@ -1662,7 +1665,7 @@
     };
     if (D.terrainRevision) out.terrainRevision = D.terrainRevision;
     if (D.displayRevision) out.displayRevision = D.displayRevision;
-    if (D.extentSeam && this.extentReconciled) out.extentReconciled = true;
+    if (D.population && this.populationRevision) out.populationRevision = this.populationRevision;
     out.lockRule = 2;
     return out;
   };
@@ -1693,52 +1696,68 @@
     this.filled = { year: year, cells: n, fP: +fP.toFixed(3), fJ: +fJ.toFixed(3) };
     return n;
   };
-  // 扩图旧档原范围内是多年演进的城区，外侧则是一次生成的城市。只修补交界带：
-  // 在相邻陆地格间交换人口和岗位，市内总量不变，且不穿过河道、机场、公园或受保护格。
-  City.prototype.reconcileExtent = function (year) {
-    const seam = D.extentSeam;
-    if (this.extentReconciled || !seam || year < seam.from) return;
-    const { x, y, size, band } = seam, W = this.W, H = this.H;
-    const x0 = Math.max(0, x - band), x1 = Math.min(W, x + size + band);
-    const y0 = Math.max(0, y - band), y1 = Math.min(H, y + size + band);
-    const a = this.pop, b = this.jobs, strength = new Float32Array(this.N), cells = [], edges = [];
-    const eligible = c => this.landFrac[c] >= 0.5 && this.regionOpen[this.region[c]] &&
-      !this.regions[this.region[c]].empty && !this.isPark[c] && !this.protectedId[c] && !this.taken[c] &&
-      (this.lu[c] <= LU.MIX || this.lu[c] === LU.INST);
-    for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) {
-      const h = Math.max(x - i - 0.5, i + 0.5 - x - size), v = Math.max(y - j - 0.5, j + 0.5 - y - size);
-      const d = Math.abs(Math.max(h, v)), c = j * W + i;
-      if (d >= band || !eligible(c)) continue;
-      strength[c] = 1 - (d / band) ** 2; cells.push(c);
+  // 从 2020 年起按完整街镇边界校准人口，原图边框不参与分组和密度计算。
+  // 只在普查基准首次生效或旧档升级时执行一次，之后沿用月度增长、地铁和新城的发展规则。
+  City.prototype.applyPopulationDistribution = function (year) {
+    const spec = D.population;
+    if (!spec || year < spec.year || this.populationRevision >= spec.revision) return false;
+    const grid = spec._grid || (spec._grid = U.unpackTyped(spec.townGrid));
+    const housing = spec._housing || (spec._housing = U.unpackTyped(spec.housing));
+    const employment = spec._employment || (spec._employment = U.unpackTyped(spec.employment));
+    if (grid.length !== this.N) throw new Error('人口分布格网与地图范围不一致');
+    const count = spec.groups.length, weightsP = new Float64Array(count), weightsJ = new Float64Array(count);
+    const wp = new Float32Array(this.N), wj = new Float32Array(this.N), eligible = new Uint8Array(this.N);
+    const before = this.totals();
+    for (let c = 0; c < this.N; c++) {
+      const k = grid[c] - 1, L = this.lu[c];
+      if (k < 0 || this.landFrac[c] < 0.5 || this.regions[this.region[c]].empty ||
+        L === LU.PARK || L === LU.HILL || L === LU.AIRPORT || L === LU.LANDMARK) continue;
+      const land = this.landFrac[c] * Math.max(0, 1 - this.taken[c]);
+      if (land <= 0) continue;
+      eligible[c] = 1;
+      // Residential footprints dominate; a small rural baseline represents
+      // dispersed villages where OSM housing polygons are incomplete.
+      wp[c] = land * (0.04 + housing[c] / 255 * 12) * (1 - this.wood[c] * 0.85);
+      wj[c] = land * (0.025 + employment[c] / 255 * 10 + housing[c] / 255 * 0.7);
+      weightsP[k] += wp[c]; weightsJ[k] += wj[c];
     }
-    for (const c of cells) {
-      const i = c % W, j = (c - i) / W;
-      for (const n of [i + 1 < x1 ? c + 1 : -1, j + 1 < y1 ? c + W : -1]) {
-        if (n < 0 || !strength[n]) continue;
-        const nx = n % W, ny = (n - nx) / W;
-        if (this.crossesRiver(i + 0.5, j + 0.5, nx + 0.5, ny + 0.5)) continue;
-        edges.push([c, n, 0.19 * Math.min(strength[c], strength[n])]);
-      }
+    let control = 0, jobWeight = 0;
+    const targetP = new Float64Array(count), targetJ = new Float64Array(count);
+    for (let k = 0; k < count; k++) {
+      if (weightsP[k] <= 0) throw new Error('普查街镇缺少可居住土地：' + spec.groups[k][1]);
+      control += spec.groups[k][2]; jobWeight += weightsJ[k];
     }
-    const dp = new Float64Array(this.N), dj = new Float64Array(this.N);
-    for (let pass = 0; pass < 18; pass++) {
-      for (const [c, n, w] of edges) {
-        const p = (a[n] - a[c]) * w, j = (b[n] - b[c]) * w;
-        dp[c] += p; dp[n] -= p; dj[c] += j; dj[n] -= j;
-      }
-      for (const c of cells) { a[c] += dp[c]; b[c] += dj[c]; dp[c] = 0; dj[c] = 0; }
+    for (let k = 0; k < count; k++) {
+      targetP[k] = before.pop * spec.groups[k][2] / control;
+      // Employment is an estimate from actual employment land plus resident
+      // distribution; it is not presented as a township employment census.
+      targetJ[k] = before.jobs * (0.65 * spec.groups[k][2] / control + 0.35 * weightsJ[k] / jobWeight);
     }
-    for (const c of cells) {
-      // Use the same urbanisation threshold as monthly growth, with a small
-      // deterministic spread so adjacent cells do not form a new straight edge.
-      const density = a[c] + b[c], threshold = 135 + 50 * U.hash2(c, 17, this.seed);
-      if (this.lu[c] === LU.RURAL && density >= threshold) {
-        this.lu[c] = this.plan[c] === LU.PARK ? LU.RES : this.plan[c]; this.street[c] = 1;
+    for (let c = 0; c < this.N; c++) {
+      const k = grid[c] - 1;
+      if (eligible[c]) {
+        this.pop[c] = targetP[k] * wp[c] / weightsP[k];
+        this.jobs[c] = targetJ[k] * wj[c] / weightsJ[k];
+      } else { this.pop[c] = 0; this.jobs[c] = 0; }
+      if (this.protectedId[c] || this.taken[c] > 0 || !eligible[c]) continue;
+      const density = this.pop[c] + this.jobs[c], built = housing[c] > 12 || employment[c] > 12 || density >= 160;
+      if (built) {
+        this.street[c] = 1;
+        // Recreate a consistent land-use mix on BOTH sides of the old map edge.
+        this.lu[c] = employment[c] > housing[c] * 1.5 ? this.plan[c] :
+          housing[c] > 12 ? (this.plan[c] === LU.INST ? LU.INST : LU.RES) : this.plan[c];
         if (!this.urbanYear[c]) this.urbanYear[c] = Math.floor(year);
-      }
-      this.bh[c] = this.heightFor(c, year);
+      } else { this.lu[c] = LU.RURAL; this.street[c] = 0; this.urbanYear[c] = 0; }
+      this.bh[c] = this.heightFor(c, year); this.dirty.add(c);
     }
-    this.extentReconciled = true;
+    this.populationRevision = spec.revision;
+    this.version++;
+    return true;
+  };
+  // The same density uses the same ground shade, including in the tile worker;
+  // historical street flags no longer create a rectangular colour cut.
+  City.prototype.groundUrbanMix = function (c) {
+    return U.clamp((this.pop[c] + this.jobs[c] - 25) / 220, 0, 1);
   };
   City.prototype.restore = function (s, year) { const it = this.restoreGen(s, year); let r = it.next(); while (!r.done) r = it.next(); };
   City.prototype.restoreGen = function* (s, year) {
@@ -1825,8 +1844,8 @@
     }
     // Newly defined park / protected areas retain their intended land use after upgrade.
     for (let c = 0; c < N; c++) if (this.regions[this.region[c]].park && this.landFrac[c] >= 0.5 && this.lu[c] === LU.RURAL) { this.lu[c] = this.plan[c] = LU.PARK; this.isPark[c] = 1; }
-    this.extentReconciled = !!s.extentReconciled;
-    this.reconcileExtent(year);
+    this.populationRevision = s.populationRevision || 0;
+    this.applyPopulationDistribution(year);
     this.eArt.fill(0); this.eName.fill(0); this.roadsBuilt.fill(0);
     yield;
     yield* this.applyRoadsGen(year);
