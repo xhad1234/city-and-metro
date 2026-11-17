@@ -123,19 +123,20 @@
       const T = TYPES[s.t]; if (!T) return;
       const f = { k: out.length, id: s.id || ('f' + i), name: s.n, label: s.label || s.n, t: s.t, T: T, x: 0, y: 0, r: s.r != null ? s.r : T.r, lmK: -1,
         open: null, close: yrOf(s.y1), w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
-        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null } : null, rw: s.rw || null, noModel: !!s.noModel };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
+        ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null } : null, rw: s.rw || null, noModel: !!s.noModel,
+        regionGate: !!s.regionGate };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });
         if (k < 0) return;
         f.lmK = k; f.x = lms[k].x; f.y = lms[k].y;
-        f.open = s.y0 != null ? yrOf(s.y0) : lms[k].year;
+        f.open = s.y0 != null ? yrOf(s.y0) : lms[k].year == null ? null : yrOf([lms[k].year, lms[k].month]);
       } else if (s.at) { f.x = s.at[0]; f.y = s.at[1]; f.open = s.y0 != null ? yrOf(s.y0) : -1e9; }
       else return;
       if (f.open == null) f.open = -1e9;
-      if (city && f.lmK < 0 && !f.ext) snapToLand(f, city);
+      if (city && f.lmK < 0 && !f.ext && !s.fixedSite) snapToLand(f, city);
       out.push(f);
     });
-    if (city) genDistrict(out, city);
+    if (city && D.generateDistrictFacilities !== false) genDistrict(out, city);
     D._fac = out; D._facSrc = D.facilities; D._facCity = city || null;
     return out;
   };
@@ -225,7 +226,7 @@
     if (f.lmK >= 0) return !!(city.landmarkOn && city.landmarkOn[f.lmK]);
     if (f.gen && (!city.regionOpen[f.gen.k] || Fac.regionPop(city, f.gen.k) < f.gen.min)) return false;
     const c = city.cellAt(f.x, f.y);
-    return c >= 0 && city.landFrac[c] >= 0.3;
+    return c >= 0 && city.landFrac[c] >= 0.3 && (!f.regionGate || !!city.regionOpen[city.region[c]]);
   };
   // 枢纽：接驳出行（汽车 + 地铁，到达与离开合计，人次/日，工作日）；其他：占全市该目的出行吸引的比例（周期规模，估算）
   Fac.pax = function (f, yr) { return f.pax ? U.interp(f.pax, yr) * 1e4 : 0; };
@@ -259,6 +260,6 @@
     if (D.fictional) return [['虚构设定', 'info'], ['规模：估算', 'est']];
     if (f.gen) return [['按片区发展生成', 'info'], ['规模：估算', 'est']];
     const s = f.src || {};
-    return [[s.pos || '位置：真实地理', 'hist'], [s.year || (f.lmK >= 0 ? '年份：地标落成（史实）' : '年份：史实参考'), 'hist'], ['规模：估算', 'est']];
+    return [[s.pos || '位置：真实地理', s.sim ? 'info' : 'hist'], [s.year || (f.lmK >= 0 ? '年份：地标落成（史实）' : '年份：史实参考'), s.sim ? 'info' : 'hist'], ['规模：估算', 'est']];
   };
 })(window.CM);

@@ -13,7 +13,7 @@
   const at = function (lat, lon, o) { const p = ll(lat, lon); return Object.assign({ x: p[0], y: p[1] }, o); };
   const anchor = function (name, lat, lon, r) { const p = ll(lat, lon); return { name: name, x: p[0], y: p[1], r: r }; };
   const anchorW = function (name, lat, lon, r) { const p = llW(lat, lon); return { name: name, x: p[0], y: p[1], r: r }; };   // OSM 坐标（WGS-84）
-  const oldOffset = [192, 208], oldEdge = ll(31.1900, 121.7000);
+  const oldOffset = [192, 208], oldSize = 152, oldEdge = ll(31.1900, 121.7000);
   const wujing = {
     stadium: [31.0566, 121.4705],
     aquatics: [31.0638, 121.4671],
@@ -21,6 +21,17 @@
     village: [31.0484, 121.4709],
   };
   const suburbanNote = '游戏扩图时间，按片区开放。';
+  // 市内到发接驳量，万人次/日。崇明机场在游戏中沿用同年的虹桥机场客流曲线。
+  const hongqiaoPax = [[2010.17, 8.4], [2015, 10.3], [2019, 12.2], [2020, 8.5], [2021, 8.9], [2022, 3.9],
+    [2023, 11.2], [2024, 12.7], [2025, 13.3], [2030, 15.5], [2035, 17], [2040, 18], [2050, 19]];
+  const chongmingAir = {
+    at: llW(31.5490, 121.6940),
+    runways: [[llW(31.5540, 121.6760), llW(31.5540, 121.7130)], [llW(31.5435, 121.6760), llW(31.5435, 121.7130)]],
+  };
+  const site = (id, n, t, lat, lon, y0, w, note, extra) =>
+    Object.assign({ id: 'sh_' + id, n, t, at: llW(lat, lon), fixedSite: true, regionGate: true, y0, w, note }, extra);
+  const localRail = (id, n, lat, lon, y0, pax, note) =>
+    site(id, n, 'rail', lat, lon, y0, null, note, { pax });
 
   // 虹桥机场飞行区（近似）、陆家嘴金融贸易区核心（近似）、虹桥商务区（近似，机场以西）
   const hongqiao = poly([[31.2160, 121.3285], [31.2160, 121.3500], [31.1790, 121.3500], [31.1790, 121.3285]]);
@@ -49,7 +60,8 @@
         open: [2040, 8],
         why: '游戏设定参考吴泾工业区的滨江更新与战略预留用地。' },
     ],
-    city: '上海', riverName: '黄浦江', seaName: '长江口', hsrYear: 2010,
+    city: '上海', riverName: '黄浦江', seaName: '长江口', hsrYear: 2010, terrainRevision: 2,
+    extentSeam: { x: oldOffset[0], y: oldOffset[1], size: oldSize, from: 2020, band: 10 },
     stages: [[1993, '无地铁时代'], [2000, '浦东开发初期'], [2010, '迎世博建设期']], stageLast: '超大城市网络化时期',
     // 历史发展阶段（v2.2，eras.js）：summary 中「史实」可查证，「估算」为模型设定的发展倾向；grow 只改变人口与岗位增长的去向（总量仍按人口曲线），
     // relocate 为每月疏解比例，corridors 为片区间通勤与购物去向倍数，demand 为出行强度与距离倍数，goals 为阶段目标（本城任务）
@@ -87,7 +99,7 @@
         demand: { decayHW: 1.22, decayHO: 1.1 },
         corridors: [{ a: 'songjiang', b: 'hqcbd', f: 1.2 }, { a: 'qingpu', b: 'hqcbd', f: 1.2 }, { a: 'lingang', b: 'jinqiao', f: 1.15 }] },
       { id: 'sh-e6', from: 2027, through: 2040, name: '喜迎奥运', tag: '模拟',
-        summary: '模拟：上海东站与宝山站按规划情景启用。吴泾滨江由工业区转向赛事、居住和文体服务。五个新城继续承接人口与岗位，全市人口在 2040 年前后达到约 3500 万。',
+        summary: '模拟：上海东站与宝山站按规划情景启用，2035 年增加崇明国际机场。吴泾滨江由工业区转向赛事、居住和文体服务。五个新城继续承接人口与岗位，全市人口在 2040 年前后达到约 3500 万。',
         grow: { pop: { songjiang: 1.6, qingpu: 1.4, fengxian: 1.6, lingang: 1.7, wujing: 1.3 }, jobs: { pvg: 1.6, baoshan_new: 1.4, wujing: 1.7, lingang: 1.6 } },
         demand: { hub: 1.1, decayHW: 1.3 },
         corridors: [{ a: 'wujing', b: 'xinzhuang', f: 1.25 }, { a: 'wujing', b: 'fengxian', f: 1.2 }, { a: 'lingang', b: 'pvg', f: 1.2 }] },
@@ -103,7 +115,8 @@
     // 虹桥机场照常运营：用地不开发，范围内只能地下设站与地下穿越（同台北松山机场的规则）
     airport: { name: '虹桥机场', closeYear: 9999, buildable: 'underground', runway: [llW(31.2131, 121.3355), llW(31.1826, 121.3371)] },   // v2.2：跑道按 OSM 坐标（原数据走向偏斜）
     // 虹桥机场第二跑道（v2.2，OSM 坐标）：在原跑道以西约 365 m，2010 年 3 月启用（史实）
-    runways: [{ a: llW(31.1834, 121.3332), b: llW(31.2130, 121.3316), from: 2010.2 }],
+    runways: [{ a: llW(31.1834, 121.3332), b: llW(31.2130, 121.3316), from: 2010.2 },
+      ...chongmingAir.runways.map(([a, b]) => ({ a, b, from: 2035 }))],
     regions: [
       { id: 'airport', name: '虹桥机场', poly: hongqiao, open: 1990, plan: 'res', note: '民用机场照常运营，用地不开发；范围内可以地下设站与地下穿越' },
       { id: 'lujiazui', name: '陆家嘴金融贸易区', poly: lujiazui, open: 1993, plan: 'cbd', note: '1990 年浦东开发开放，1993 年起陆家嘴金融贸易区大规模建设（史实）' },
@@ -192,7 +205,7 @@
       Object.assign(atW(31.2436, 121.4399), { id: 'sh_jade', name: '玉佛寺', w: 150, d: 180, year: 1918, kind: 'temple' }),
       Object.assign(atW(31.1771, 121.4471), { id: 'sh_longhua', name: '龙华寺', w: 160, d: 220, year: 977, kind: 'pagoda', h: 41 }),
       Object.assign(at(31.1932, 121.4370), { id: 'sh_xjh', name: '徐家汇天主堂', w: 90, d: 40, year: 1910, kind: 'church' }),
-      Object.assign(atW(31.2517, 121.4532), { id: 'sh_station', name: '上海站', w: 300, d: 120, year: 1987, kind: 'rail' }),
+      atW(31.2515, 121.4511, { id: 'sh_station', name: '上海站', w: 300, d: 120, year: 1987, kind: 'rail', fixedSite: true }),
       Object.assign(atW(31.2981, 121.4979), { id: 'sh_fudan', name: '复旦大学', w: 900, d: 700, year: 1905, kind: 'campus' }),
       Object.assign(atW(31.2847, 121.4974), { id: 'sh_tongji', name: '同济大学', w: 900, d: 800, year: 1952, kind: 'campus' }),
       Object.assign(at(31.2005, 121.4370), { id: 'sh_sjtu', name: '上海交通大学（徐汇）', w: 600, d: 500, year: 1896, kind: 'campus', style: 'palace' }),
@@ -204,35 +217,49 @@
       Object.assign(atW(31.2373, 121.5014), { id: 'sh_jinmao', name: '金茂大厦', w: 70, d: 70, year: 1999, kind: 'skyscraper', style: 'jinmao', h: 420.5 }),
       Object.assign(atW(31.2733, 121.4763), { id: 'sh_hongkou', name: '虹口足球场', w: 220, d: 180, year: 1999, kind: 'stadium' }),
       Object.assign(atW(31.2119, 121.5634), { id: 'sh_sniec', name: '上海新国际博览中心', w: 600, d: 500, year: 2001, kind: 'expo' }),
-      Object.assign(atW(31.1553, 121.4266), { id: 'sh_south', name: '上海南站', w: 300, d: 300, year: 2006, kind: 'rail', style: 'round' }),
+      atW(31.1551, 121.4248, { id: 'sh_south', name: '上海南站', w: 300, d: 300, year: 2006, kind: 'rail', style: 'round', fixedSite: true }),
       Object.assign(atW(31.2366, 121.5030), { id: 'sh_swfc', name: '上海环球金融中心', w: 60, d: 60, year: 2008, kind: 'skyscraper', style: 'swfc', h: 492 }),
-      Object.assign(atW(31.1960, 121.3162), { id: 'sh_hqstation', name: '虹桥站', w: 600, d: 400, rot: 90, year: 2010, kind: 'rail' }),
+      atW(31.1960, 121.3162, { id: 'sh_hqstation', name: '虹桥站', w: 600, d: 400, rot: 90, year: 2010, kind: 'rail', fixedSite: true }),
       Object.assign(atW(31.1865, 121.4899), { id: 'sh_cnpav', name: '中国馆', w: 140, d: 140, year: 2010, kind: 'museum', style: 'crown' }),
       Object.assign(atW(31.2356, 121.5013), { id: 'sh_tower', name: '上海中心大厦', w: 80, d: 80, year: 2015, kind: 'skyscraper', style: 'shtower', h: 632 }),
       Object.assign(atW(31.1463, 121.6560), { id: 'sh_disney', name: '上海迪士尼乐园', w: 1150, d: 900, h: 60, year: 2016, kind: 'themepark', style: 'castle' }),   // 约 91 公顷，奇幻童话城堡约 60 m
-      atW(30.9847, 121.2267, { id: 'sh_songjiang_station', name: '上海松江站', w: 520, d: 220, year: 2024, kind: 'rail' }),
-      atW(31.1350, 121.7750, { id: 'sh_east_station', name: '上海东站', w: 720, d: 390, year: 2027, kind: 'rail' }),
-      atW(31.4025, 121.4491, { id: 'sh_baoshan_station', name: '上海宝山站', w: 480, d: 260, year: 2027, kind: 'rail' }),
+      atW(30.9871, 121.2244, { id: 'sh_songjiang_station', name: '上海松江站', w: 520, d: 220, year: 2024, month: 12, kind: 'rail', fixedSite: true }),
+      atW(31.1227, 121.7725, { id: 'sh_east_station', name: '上海东站', w: 390, d: 720, year: 2027, month: 7, kind: 'rail', fixedSite: true }),
+      atW(31.4046, 121.4413, { id: 'sh_baoshan_station', name: '上海宝山站', w: 480, d: 260, year: 2027, month: 7, kind: 'rail', fixedSite: true }),
       atW(...wujing.stadium, { id: 'sh_oly_stadium', name: '吴泾奥林匹克体育场', w: 370, d: 310, year: 2037, kind: 'stadium' }),
       atW(...wujing.aquatics, { id: 'sh_oly_aquatics', name: '吴泾奥林匹克游泳馆', w: 220, d: 160, year: 2038, kind: 'stadium' }),
       atW(...wujing.arena, { id: 'sh_oly_arena', name: '吴泾奥林匹克体育馆', w: 270, d: 220, year: 2038, kind: 'stadium' }),
     ],
-    // 重要设施（见 facility.js）：位置与启用 / 停用年份为史实参考（位置近似）；规模均为估算。
-    // 枢纽 pax：市内接驳出行（汽车 + 地铁，万人次/日）。
+    // 上海的外围设施按实际地址列出。枢纽 pax 为游戏内工作日市内接驳到发合计（万人次/日），换乘不出站的客流不计。
+    generateDistrictFacilities: false,
     facilities: [
-      { id: 'sh_station', n: '上海站', t: 'rail', lm: 'sh_station', pax: [[1990, 5], [2000, 8], [2010, 10], [2019, 9]] },
-      { id: 'sh_south', n: '上海南站', t: 'rail', lm: 'sh_south', y0: [2006, 7], pax: [[2006.5, 2], [2010, 4], [2019, 4]] },
-      { id: 'sh_west', n: '上海西站', t: 'rail', at: ll(31.2625, 121.4040), pax: [[1990, 0.5], [2010, 1], [2019, 1.5]] },
-      { id: 'sh_hqstation', n: '虹桥站', t: 'rail', lm: 'sh_hqstation', y0: [2010, 7], pax: [[2010.5, 4], [2015, 10], [2019, 14], [2020, 11], [2022, 8], [2023, 14], [2024.92, 16], [2030, 17]], note: '2010 年 7 月虹桥综合交通枢纽启用，京沪高铁 2011 年通车。' },
+      { id: 'sh_station', n: '上海站', t: 'rail', lm: 'sh_station', pax: [[1990, 7], [2000, 11], [2010, 16], [2019, 18], [2020, 12], [2021, 15], [2022, 8], [2023, 17], [2026, 20], [2040, 23]], note: '静安区秣陵路303号，上海铁路客运主站之一。' },
+      { id: 'sh_south', n: '上海南站', t: 'rail', lm: 'sh_south', y0: [2006, 7], pax: [[2006.5, 2.5], [2010, 4], [2019, 5], [2022, 3], [2023, 4.5], [2025, 5.5], [2026, 6.5], [2040, 9]], note: '徐汇区沪闵路9001号。2025 年调图后增加高铁客运能力。' },
+      { id: 'sh_west', n: '上海西站', t: 'rail', at: llW(31.2654, 121.3957), fixedSite: true,
+        pax: [[1990, 0.5], [2005, 0.65], [2010.5, 0.25], [2019, 0.45], [2022, 0.2], [2026, 0.55], [2040, 0.75]], note: '普陀区桃浦路22号，按国铁小站估算，不包含同名地铁站的进出闸客流。' },
+      { id: 'sh_hqstation', n: '虹桥站', t: 'rail', lm: 'sh_hqstation', y0: [2010, 7], pax: [[2010.5, 6], [2015, 22], [2019, 32], [2020, 23], [2021, 27], [2022, 14], [2023, 34], [2024, 40], [2026, 42], [2040, 48]],
+        note: '虹桥枢纽铁路站房。2024 年铁路客流约 1.55 亿人次，游戏按日均到发及市内接驳估算；不叠加机场或枢纽其他方式客流。' },
       { id: 'sh_disney', n: '上海迪士尼乐园', t: 'scenic', lm: 'sh_disney', y0: [2016, 6], w: [[2016.5, 0.045], [2019, 0.05], [2020, 0.025], [2021, 0.04], [2023, 0.05]], we: 1.9, note: '主题乐园：周末与假日客流明显高于工作日（估算）；位于浦东川沙，2016 年 6 月开园。' },
-      { id: 'sh_pvgair', n: '浦东机场（川沙接驳）', t: 'air', ext: ['E', 9], extEdge: [oldOffset[0] + 152, oldEdge[1]], at: oldEdge, y0: [1999, 9], y1: [2015, 1], pax: [[1999.7, 0.4], [2005, 2], [2010, 3.8], [2015, 5]], note: '1999 年 9 月浦东机场通航。游戏在机场片区开放前保留川沙接驳。' },
-      { id: 'sh_pvg_terminal', n: '上海浦东国际机场', t: 'air', at: llW(31.1519, 121.8015), r: 3, y0: [2015, 1],
-        rw: [llW(31.1721, 121.7963), llW(31.1360, 121.7986)], pax: [[2015, 5], [2019, 7], [2020, 4], [2022, 2.6], [2023, 6.5], [2024.92, 8.5], [2040, 12]],
-        note: '2015 年近郊扩图后可修线直达浦东机场航站楼。' },
-      { id: 'sh_hqair', n: '虹桥机场', t: 'air', at: llW(31.1965, 121.3425), rw: [llW(31.2131, 121.3355), llW(31.1826, 121.3371)], pax: [[1990, 1.4], [1999.8, 3.5], [2000, 2.5], [2005, 4.9], [2010, 8.5], [2019, 12.5], [2020, 9], [2022, 5], [2023, 12.5], [2024.92, 14], [2040, 17]], note: '1999 年浦东国际机场启用后国际航线逐步迁出；2010 年 T2 航站楼启用。' },
-      { id: 'sh_songjiang_station', n: '上海松江站', t: 'rail', lm: 'sh_songjiang_station', y0: [2024, 12], pax: [[2024.92, 2.5], [2028, 4.8], [2040, 6.6]], note: '2024 年 12 月随沪苏湖高铁开通。' },
-      { id: 'sh_east_station', n: '上海东站', t: 'rail', lm: 'sh_east_station', y0: [2027, 7], pax: [[2027.5, 5], [2035, 10], [2040, 13]], note: '按公布的 2027 年投运计划设置，接驳客流为模拟。' },
-      { id: 'sh_baoshan_station', n: '上海宝山站', t: 'rail', lm: 'sh_baoshan_station', y0: [2027, 7], pax: [[2027.5, 3], [2035, 6], [2040, 8]], note: '按公布的 2027 年投运计划设置，接驳客流为模拟。' },
+      { id: 'sh_pvgair', n: '浦东机场（川沙接驳）', t: 'air', ext: ['E', 9], extEdge: [oldOffset[0] + 152, oldEdge[1]], at: oldEdge, y0: [1999, 9], y1: [2015, 1], pax: [[1999.67, 0.9], [2005, 5.8], [2010, 9.2], [2015, 14]], note: '1999 年 9 月浦东机场通航。游戏在机场片区开放前保留川沙接驳。' },
+      { id: 'sh_pvg_terminal', n: '上海浦东国际机场', t: 'air', at: llW(31.1519, 121.8015), fixedSite: true, r: 3, y0: [2015, 1],
+        rw: [llW(31.1721, 121.7963), llW(31.1360, 121.7986)], pax: [[2015, 14], [2019, 18], [2020, 7.5], [2021, 8], [2022, 3.5], [2023, 13], [2024, 18.2], [2025, 20], [2030, 23], [2040, 29]],
+        note: '航站区以两楼之间的到达交通中心代表。根据民航及上海机场年报扣除纯空空中转等，估算市内接驳量。' },
+      { id: 'sh_hqair_t1', n: '虹桥机场（1号航站楼时期）', t: 'air', at: llW(31.1965, 121.3425), fixedSite: true, y1: [2010, 3],
+        pax: [[1990, 1.4], [1999.67, 3.5], [2000, 2.5], [2005, 4.8], [2010.17, 8.4]], note: '2010 年 3 月以前，虹桥民航客运集中在机场东侧的 1 号航站楼。' },
+      { id: 'sh_hqair', n: '上海虹桥国际机场', t: 'air', at: llW(31.1958, 121.3266), fixedSite: true, y0: [2010, 3], r: 1.7,
+        rw: [llW(31.2130, 121.3316), llW(31.1834, 121.3332)], pax: hongqiaoPax, note: '2010 年 3 月起以 2 号航站楼代表虹桥机场两座航站楼的市内接驳。' },
+      { id: 'sh_chongming_air', n: '崇明国际机场', t: 'air', at: chongmingAir.at, rw: chongmingAir.runways[1], fixedSite: true,
+        regionGate: true, y0: [2035, 1], r: 2, pax: hongqiaoPax,
+        note: '游戏设定：航站楼位于崇明岛中东部、港沿镇与向化镇之间，2035 年投运，市内接驳量与同年的虹桥机场相同。',
+        src: { pos: '位置：虚构选址', year: '年份：模拟', sim: true } },
+      { id: 'sh_songjiang_station', n: '上海松江站', t: 'rail', lm: 'sh_songjiang_station', y0: [2024, 12], pax: [[2024 + 11 / 12, 3], [2026, 4.8], [2030, 6.5], [2040, 7.5]], note: '松江区盐仓路附近，2024 年 12 月随沪苏湖高铁开通，远期参考规划年客流约 2500 万人次。' },
+      { id: 'sh_east_station', n: '上海东站', t: 'rail', lm: 'sh_east_station', y0: [2027, 7], pax: [[2027.5, 7], [2035, 13], [2040, 16]], note: '浦东祝桥镇站场建设范围内，祝钦路以南、金亭公路以北。按 2027 年投运计划设置，客流为模拟。', src: { pos: '位置：公开站场方案', year: '年份：规划情景', sim: true } },
+      { id: 'sh_baoshan_station', n: '上海宝山站', t: 'rail', lm: 'sh_baoshan_station', y0: [2027, 7], pax: [[2027.5, 4.5], [2035, 9.5], [2040, 13]], note: '宝山湄浦路北侧，江杨北路与铁力路之间。远期参考规划年到发 5400 万人次，客流为模拟。', src: { pos: '位置：公开站场方案', year: '年份：规划情景', sim: true } },
+      localRail('anting_north', '安亭北站', 31.31638, 121.15373, [2010, 7], [[2010.5, 0.1], [2025, 0.17], [2040, 0.25]], '嘉定区安亭镇，沪宁城际铁路车站。'),
+      localRail('anting_west', '安亭西站', 31.31312, 121.15246, [2020, 7], [[2020.5, 0.08], [2025, 0.11], [2040, 0.19]], '嘉定区安亭镇，沪苏通铁路车站；与安亭北站的合计量参考安亭枢纽统计。'),
+      localRail('nanxiang_north', '南翔北站', 31.28338, 121.30422, [2010, 7], [[2010.5, 0.05], [2025, 0.12], [2040, 0.18]], '嘉定区南翔镇，沪宁城际铁路车站。'),
+      localRail('jinshan_north', '金山北站', 30.89627, 121.08488, [2010, 10], [[2010.75, 0.06], [2025, 0.19], [2040, 0.3]], '金山区枫泾镇，沪杭高铁车站。'),
+      localRail('liantang_station', '练塘站', 30.99733, 121.02659, [2024, 12], [[2024 + 11 / 12, 0.06], [2026, 0.1], [2040, 0.21]], '青浦区练塘镇东侧，随沪苏湖高铁开通。'),
       { id: 'sh_oly_stadium', n: '吴泾奥林匹克体育场', t: 'stadium', lm: 'sh_oly_stadium',
         w: [[2037, 0.009], [2040 + 6 / 12, 0.014], [2040 + 7 / 12, 0.15], [2040 + 8 / 12, 0.022]], note: '模拟：2040 年夏季奥运会开闭幕式与田径比赛主场馆。' },
       { id: 'sh_oly_aquatics', n: '吴泾奥林匹克游泳馆', t: 'stadium', lm: 'sh_oly_aquatics',
@@ -271,7 +298,8 @@
       { id: 'sh_njxc', n: '南京西路商务区', t: 'cbd', at: ll(31.2295, 121.4560), w: [[1990, 0.005], [2000, 0.02]] },
       { id: 'sh_gubei', n: '虹桥开发区（古北）', t: 'cbd', at: ll(31.2050, 121.3990), w: 0.01 },
       { id: 'sh_chj', n: '漕河泾开发区', t: 'cbd', at: ll(31.1700, 121.4000), w: 0.012 },
-      { id: 'sh_zj', n: '张江高科技园区', t: 'cbd', at: ll(31.2030, 121.5900), y0: 1992, w: [[1992, 0.002], [2010, 0.025]] },
+      { id: 'sh_zj', n: '张江高科技园区', t: 'cbd', at: llW(31.2076, 121.5840), fixedSite: true, y0: 1992,
+        w: [[1992, 0.002], [2010, 0.025]], note: '浦东新区郭守敬路一带，位于张江科学城北部的早期研发园区。' },
       { id: 'sh_hqcbd', n: '虹桥商务区', t: 'cbd', at: llW(31.19319, 121.31114), y0: 2010, w: [[2010, 0.003], [2020, 0.02]] },
       { id: 'sh_bundv', n: '外滩', t: 'scenic', lm: 'sh_bund', w: 0.06 },
       { id: 'sh_pearl', n: '东方明珠', t: 'scenic', lm: 'sh_pearl', w: 0.03 },
@@ -299,6 +327,60 @@
       { id: 'sh_icc', n: '上海国际会议中心', t: 'venue', at: llW(31.24145, 121.49245), y0: 1999, w: 0.005 },
       { id: 'sh_gt', n: '上海大剧院', t: 'venue', lm: 'sh_gt', w: 0.006 },
       { id: 'sh_mbcc', n: '世博文化中心', t: 'venue', at: ll(31.1890, 121.4970), y0: [2010, 5], w: 0.008 },
+      // 五个新城：用实际商场或街区代表商圈，标注到已营业的地块。
+      site('jiading_baolong', '嘉定新城·宝龙广场', 'shop', 31.34768, 121.25612, 2016, 0.020, '嘉定区阿克苏路1099号。'),
+      site('songjiang_inc', '松江新城·松江印象城', 'shop', 31.06342, 121.21834, [2021, 11], 0.023, '广富林路与人民北路交叉口东北侧，是松江新城广富林商业轴的一部分。'),
+      site('songjiang_wanda', '松江新城·松江万达广场', 'shop', 31.05996, 121.23885, 2014, 0.018, '松江区广富林路658号，广富林商业轴东段。'),
+      site('qingpu_wuyue', '青浦新城·吾悦广场', 'shop', 31.14536, 121.09004, 2017, 0.015, '青浦区盈浦街道淀山湖大道152弄。'),
+      site('qingpu_wanda', '青浦新城·青浦万达茂', 'shop', 31.13551, 121.07827, [2019, 6], 0.019, '青浦区淀山湖大道851号。'),
+      site('nanqiao_bailian', '奉贤新城·百联南桥', 'shop', 30.91685, 121.48068, 2008, 0.019, '奉贤区南奉公路8500号，南桥商圈。'),
+      site('lingang_gangcheng', '南汇新城·港城新天地', 'shop', 30.89803, 121.90200, 2019, 0.014, '临港新片区茉莉路225弄，滴水湖西南侧。'),
+      // 近郊、远郊商圈与会展。
+      site('hongqiao_hub_shop', '虹桥天地', 'shop', 31.19464, 121.31102, 2015, 0.019, '闵行区申长路688号，虹桥火车站西侧。'),
+      site('necc', '国家会展中心（上海）', 'venue', 31.19172, 121.29751, 2015, 0.024, '青浦区徐泾镇盈港东路168号，进博会举办地。', { r: 2.5 }),
+      site('zhaoxiang_outlets', '赵巷·百联奥特莱斯', 'shop', 31.15830, 121.22483, 2006, [[2006, 0.014], [2026.67, 0.022]], '青浦区沪青平公路2888号；2026 年二期扩大商业规模。'),
+      site('jiangqiao_wanda', '江桥万达广场', 'shop', 31.24177, 121.31906, 2011, 0.015, '嘉定区金沙江西路1051弄。'),
+      site('xinzhuang_zhongsheng', '莘庄·仲盛世界商城', 'shop', 31.10919, 121.38216, 2009, 0.02, '闵行区都市路5001号，莘庄站南侧。'),
+      site('nanxiang_inc', '南翔印象城MEGA', 'shop', 31.30685, 121.30144, [2020, 8], 0.022, '嘉定区陈翔公路2299号。'),
+      site('baoshan_wanda', '庙行·宝山万达广场', 'shop', 31.32574, 121.44253, 2011, 0.019, '宝山区一二八纪念路968号。'),
+      site('wusong_seaworld', '吴淞口·上海海上世界', 'shop', 31.40716, 121.49769, [2024, 9], 0.015, '宝山吴淞口国际邮轮港，邮轮主题滨江商业区。'),
+      site('jinshan_wanda', '金山万达广场', 'shop', 30.75638, 121.33057, 2015, 0.015, '金山区山阳镇龙皓路1088号。'),
+      site('jinqiao_shop', '金桥国际商业广场', 'shop', 31.25812, 121.57523, 2009, 0.018, '浦东新区张杨路3611号。'),
+      site('zhangjiang_chamtime', '张江·长泰广场', 'shop', 31.20828, 121.59789, 2014, 0.020, '浦东新区金科路2889号。'),
+      site('zhoupu_wanda', '周浦万达广场', 'shop', 31.11676, 121.56530, 2009, 0.017, '浦东新区沪南公路3449弄。'),
+      site('chuansha_bailian', '百联川沙购物中心', 'shop', 31.18722, 121.69347, 2020, 0.014, '浦东新区翔川路638号。'),
+      site('chongming_wanda', '城桥·崇明万达广场', 'shop', 31.6291, 121.4094, 2020, 0.014, '崇明区城桥镇崇明大道8388号。'),
+      // 校园组团。用实际校园地块或校际出入口定位，不用同名地铁站。
+      site('songjiang_uni', '松江大学城', 'uni', 31.05113, 121.20781, 2001, 0.054, '松江区文汇路与龙源路附近，代表松江大学城的多所高校。', { r: 3 }),
+      site('zhangjiang_uni', '张江大学城', 'uni', 31.19300, 121.59182, 2003, [[2003, 0.014], [2016, 0.032]], '浦东新区蔡伦路1200号上海中医药大学与张衡路825号复旦大学张江校区之间。', { r: 2 }),
+      site('shanghaitech', '上海科技大学（张江校区）', 'uni', 31.17943, 121.59023, 2016, 0.014, '浦东新区华夏中路393号。'),
+      site('minhang_uni', '闵行大学城', 'uni', 31.02756, 121.43231, 1987, [[1990, 0.023], [2006, 0.048]], '交大闵行校区东川路800号；与东侧华东师大闵行校区（东川路500号）组成大学城。', { r: 2.8 }),
+      site('lingang_uni', '临港大学城', 'uni', 30.88475, 121.89311, 2008, 0.032, '以上海海洋大学沪城环路999号为锚点，含东南侧上海海事大学临港校区。', { r: 2.6 }),
+      site('haiwan_uni', '奉贤海湾大学城', 'uni', 30.83974, 121.51285, 2003, 0.029, '以上海师范大学海思路100号为锚点，含北侧上海应用技术大学奉贤校区。', { r: 2.5 }),
+      // 科创园区与公共服务。
+      site('zizhu', '紫竹科学园区', 'cbd', 31.02450, 121.44778, 2002, [[2015, 0.012], [2025, 0.022]], '闵行区吴泾镇东川路555号，紫竹国家高新技术产业开发区。'),
+      site('g60', '松江·G60科创云廊', 'cbd', 31.09148, 121.32104, 2021, 0.014, '松江区莘砖公路239号，长三角G60科创走廊的松江园区。'),
+      site('caohejing_oasis', '漕河泾科技绿洲（浦西园区）', 'cbd', 31.16763, 121.38410, 2009, 0.014, '漕河泾开发区田林路1016号一带。'),
+      site('ruijin_north', '瑞金医院嘉定院区', 'hosp', 31.33741, 121.25453, 2012, 0.025, '嘉定区希望路999号，原瑞金医院北院。'),
+      site('first_songjiang', '上海市第一人民医院（松江院区）', 'hosp', 31.04283, 121.22176, 2006, 0.026, '松江区新松江路650号。'),
+      site('fengxian_hosp', '奉贤区中心医院', 'hosp', 30.92377, 121.50243, 2012, 0.021, '奉贤区南奉公路6600号。'),
+      // 有明确入口或实际范围的旅游目的地。
+      site('sheshan', '佘山国家森林公园', 'scenic', 31.09628, 121.18449, 1993, 0.014, '松江区佘山镇；定位于外青松公路附近的西佘山主片区。', { r: 2 }),
+      site('happy_valley', '上海欢乐谷', 'scenic', 31.09854, 121.20988, 2009, 0.021, '松江区佘山旅游度假区林湖路888号。', { r: 2.4, we: 1.75 }),
+      site('chenshan', '上海辰山植物园', 'park', 31.07182, 121.17480, 2010, 0.015, '松江区辰花公路3888号，定位于园区南门。', { we: 1.55 }),
+      site('zhujiajiao', '朱家角古镇', 'scenic', 31.11610, 121.04601, 2000, 0.018, '青浦区课植园路555号游客中心，服务淀浦河两岸古镇。', { r: 1.4 }),
+      site('guyiyuan', '南翔古猗园', 'park', 31.29383, 121.31186, 1959, 0.008, '嘉定区南翔镇沪宜公路218号。'),
+      site('gucun', '顾村公园', 'park', 31.34292, 121.37051, 2010, 0.015, '宝山区沪太路4788号一带，樱花季主要游览地。', { r: 2 }),
+      site('wildlife', '上海野生动物园', 'scenic', 31.05738, 121.71664, 1995, 0.024, '浦东新区南六公路178号。', { r: 2.4, we: 1.6 }),
+      site('haichang', '上海海昌海洋公园', 'scenic', 30.91578, 121.90047, 2018, 0.020, '临港新片区银飞路166号，滴水湖旅游度假区。', { we: 1.7 }),
+      site('haiwan_park', '上海海湾国家森林公园', 'park', 30.86371, 121.68621, 2010, 0.013, '奉贤区随塘河路1677号。', { r: 2.8 }),
+      site('fengjing', '枫泾古镇', 'scenic', 30.88954, 121.01312, 2004, 0.011, '金山区枫泾镇亭枫公路8588弄附近。'),
+      site('legoland', '上海乐高乐园度假区', 'scenic', 30.88636, 121.09387, [2025, 7], 0.011, '金山区枫泾镇，乐缤路与申高路一带。2025 年 7 月 5 日开园。', { r: 1.6, we: 1.8 }),
+      site('jinshan_beach', '金山城市沙滩', 'scenic', 30.71090, 121.34560, 2006, 0.014, '金山区沪杭公路7555号，杭州湾北岸。', { we: 1.7 }),
+      site('dongping_park', '东平国家森林公园', 'park', 31.68044, 121.47683, 1993, 0.012, '崇明区北沿公路2188号。', { r: 2.8 }),
+      site('changxing_park', '长兴岛郊野公园', 'park', 31.40657, 121.70447, 2016, 0.008, '崇明区长兴岛秋柑路199号。', { r: 2 }),
+      site('yuanxiang', '远香湖公园', 'park', 31.3518, 121.2601, 2010, 0.008, '嘉定新城白银路一带，定位于远香湖西侧陆地。'),
+      site('auto_museum', '上海汽车博物馆', 'scenic', 31.28053, 121.16578, 2007, 0.008, '嘉定区安亭镇博园路7565号。'),
     ],
     districtLabels: [['黄浦', ['黄浦区']], ['静安', ['静安区']], ['徐汇', ['徐汇区']], ['长宁', ['长宁区']], ['普陀', ['普陀区']], ['虹口', ['虹口区']], ['杨浦', ['杨浦区']], ['浦东', ['浦东新区']], ['宝山', ['宝山区']], ['闵行', ['闵行区']], ['嘉定', ['嘉定区']]],
     // 纪事（只能在末尾追加：已发生记录按序号保存）
@@ -322,7 +404,7 @@
       { y: 2010, m: 5, tag: '史实', title: '2010 年上海世博会开幕', desc: '184 天里参观人次约 7300 万，园区横跨黄浦江两岸。', fx: { demand: { hub: 1.1, months: 6 }, sat: { v: 2, months: 6 } } },
       { y: 2015, m: 12, tag: '史实', title: '上海中心大厦落成', desc: '高 632 m，中国最高的建筑。' },
       { y: 2016, m: 6, tag: '史实', title: '上海迪士尼乐园开园', desc: '浦东川沙的主题乐园与度假区开园，带来大量周末与假日的休闲出行；地铁 11 号线迪士尼站同年 4 月启用。' },
-      { y: 2018, m: 11, tag: '史实', title: '首届中国国际进口博览会', desc: '在虹桥的国家会展中心（地图范围外附近）举行。', fx: { demand: { hub: 1.1, months: 1 } } },
+      { y: 2018, m: 11, tag: '史实', title: '首届中国国际进口博览会', desc: '在虹桥的国家会展中心（上海）举行。', fx: { demand: { hub: 1.1, months: 1 } } },
       { y: 2020, m: 1, tag: '史实', title: '新冠肺炎疫情', desc: '春节后城市活动大幅减少，客流骤降，之后逐步恢复。', fx: { demand: { sc: 0.7, sh: 0.75, lz: 0.6, hub: 0.5, months: 3, fade: 1 } } },
       { y: 2021, m: 3, tag: '史实', title: '上海推进五个新城建设', desc: '嘉定、青浦、松江、奉贤、南汇加快建设，游戏提高这些片区的人口和岗位增长权重。' },
     ],
@@ -349,6 +431,7 @@
         fx: { demand: { lz: 1.3, hub: 1.2, months: 1 }, sat: { v: 2, months: 3 } } },
       { y: 2041, m: 1, tag: '模拟', title: '奥运村转为居住社区', desc: '吴泾奥运村改作居住与社区服务用地，场馆继续开放。',
         fx: { grow: { region: 'wujing_village', pop: 2, years: 4 } } },
+      { y: 2035, m: 1, tag: '模拟', title: '崇明国际机场启用', desc: '游戏设定：崇明岛中东部新增国际机场，市内接驳客流达到与虹桥机场相同的规模。' },
     ],
     // 本地历史主题任务：参考上海的发展需求，不要求复刻真实线路走向（奖励单位：万元，1990 年价格）
     histTasks: [
@@ -377,7 +460,7 @@
       { id: 'shd2', from: [1998, 1], to: [2010, 12], type: 'connect', months: 36, reward: 35000, title: '古北与虹桥开发区', desc: '连接古北、虹桥路与徐家汇。', anchors: [anchor('古北', 31.2010, 121.3980, 3), anchor('虹桥路', 31.1980, 121.4210, 3), anchor('徐家汇', 31.1940, 121.4370, 3)] },
       { id: 'shd3', from: [2005, 1], to: [2018, 12], type: 'connect', months: 36, reward: 40000, title: '宝山大型居住区', desc: '连接大场、上海大学与上海站。', anchors: [anchor('大场', 31.2950, 121.4100, 3), anchor('上海大学', 31.3160, 121.3920, 3), anchor('上海站', 31.2495, 121.4560, 3)] },
     ],
-    taskNote: '历史主题任务参考上海 1990 年起的发展需求（南北与东西主轴、越江、浦东开发、世博会与虹桥枢纽），不要求按真实线路走向建设，只需满足目标描述。',
+    taskNote: '历史任务参考城市发展和交通规划；2027 年后的新枢纽、崇明机场及奥运任务为游戏情景。无须照搬真实线路，只需完成目标。',
     // 城市策略难题（v2.3，可选挑战）
     scenarios: [
       { id: 'sh-sc1', theme: '上海：浦东开发与越江', title: '把浦西接进浦东腹地', type: 'budgetConnect', from: [1993, 1], to: [2004, 12], months: 60, rewardMonths: 3, budgetX: 1.2,
@@ -433,11 +516,39 @@
   data.districtLabels = ['黄浦区', '徐汇区', '长宁区', '静安区', '普陀区', '虹口区', '杨浦区', '闵行区',
     '宝山区', '嘉定区', '浦东新区', '金山区', '松江区', '青浦区', '奉贤区', '崇明区'].map(n => [n, [n]]);
   data.places.push(['吴泾奥林匹克公园', ...llW(...wujing.stadium), 2]);
+  // 以设施地块为任务锚点，避免任务位置和详情页不同。
+  const facilityAnchor = (id, r) => {
+    const f = data.facilities.find(s => s.id === 'sh_' + id);
+    const lm = f.lm && data.landmarks.find(l => l.id === f.lm);
+    const [x, y] = f.at || [lm.x, lm.y];
+    return { name: f.n, x, y, r, fixedSite: true };
+  };
+  const connection = (id, appear, deadline, reward, title, desc, anchors) =>
+    ({ id, appear, deadline, type: 'connect', reward, title, desc, anchors });
+  const f = facilityAnchor;
+  data.histTasks.push(
+    connection('sh-newcity-academic', [2021, 3], [2028, 12], 120000, '五个新城：松江科教与商业', '将松江大学城、松江印象城和松江院区接入同一个线网。', [f('songjiang_uni', 3), f('songjiang_inc', 3), f('first_songjiang', 3)]),
+    connection('sh-newcity-west', [2021, 6], [2031, 12], 150000, '五个新城：虹桥向西', '经徐泾国家会展中心把青浦新城的吾悦广场和虹桥站接入同一个线网。', [f('qingpu_wuyue', 3), f('necc', 4), f('hqstation', 4)]),
+    connection('sh-reopen-campus', [2022, 6], [2028, 12], 120000, '复工复学：闵行大学城和紫竹', '恢复生产生活后，为闵行大学城和紫竹科学园区提供轨道接驳，并连接莘庄。', [f('minhang_uni', 3), f('zizhu', 3), f('xinzhuang_zhongsheng', 4)]),
+    { id: 'sh-tourism-rebound', appear: [2023, 1], deadline: [2030, 12], type: 'facShare', fac: 'sh_happy_valley', basis: 'we', target: 0.12, reward: 100000,
+      title: '文旅复苏：周末去佘山', desc: '让上海欢乐谷周末至少 12% 的到访出行乘地铁。' },
+    connection('sh-airport-link', [2024, 12], [2034, 12], 280000, '机场联络：虹桥到浦东', '把虹桥和浦东两座机场接入同一个线网，服务机场联络线通车带来的接驳需求。', [f('hqair', 3), f('pvg_terminal', 4)]),
+    connection('sh-songjiang-hub', [2024, 12], [2032, 12], 145000, '沪苏湖高铁：松江枢纽', '把上海松江站、松江大学城和松江印象城接入同一个线网。', [f('songjiang_station', 3), f('songjiang_uni', 3), f('songjiang_inc', 3)]),
+    connection('sh-legoland-link', [2025, 7], [2034, 12], 125000, '金山文旅：乐高乐园和枫泾', '乐高乐园开园后，把园区、金山北站和枫泾古镇接入同一个线网。', [f('legoland', 3), f('jinshan_north', 3), f('fengjing', 3)]),
+    connection('sh-eastern-hub', [2027, 7], [2035, 12], 180000, '东方枢纽换乘', '模拟：把上海东站、浦东国际机场和张江大学城接入同一个线网。', [f('east_station', 3), f('pvg_terminal', 4), f('zhangjiang_uni', 3)]),
+    connection('sh-baoshan-hub', [2027, 7], [2035, 12], 155000, '宝山枢纽接驳', '模拟：把上海宝山站、顾村公园和宝山万达接入同一个线网。', [f('baoshan_station', 3), f('gucun', 4), f('baoshan_wanda', 3)]),
+    connection('sh-newcity-lingang', [2029, 1], [2038, 12], 190000, '南汇新城：校园、商圈与海昌', '规划情景：连接临港大学城、港城新天地和海昌海洋公园，并接入浦东国际机场。', [f('lingang_uni', 3), f('lingang_gangcheng', 3), f('haichang', 3), f('pvg_terminal', 4)]),
+    connection('sh-olympic-campus', [2033, 1], [2039, 6], 170000, '吴泾：场馆与大学城', '模拟：吴泾场馆建设期间，先连通闵行大学城、紫竹科学园区及吴泾奥运村址。', [f('minhang_uni', 3), f('zizhu', 3), f('oly_village', 3)]),
+    connection('sh-chongming-airport', [2035, 1], [2041, 12], 260000, '崇明国际机场接入全市线网', '模拟：把崇明国际机场、城桥万达、长兴岛和浦东国际机场接入同一个线网。', [f('chongming_air', 4), f('chongming_wanda', 3), anchorW('长兴岛', 31.3931, 121.7179, 5), f('pvg_terminal', 4)]),
+    { id: 'sh-olympic-test', appear: [2039, 7], deadline: [2040, 8], type: 'facShare', fac: 'sh_oly_stadium', basis: 'we', target: 0.25, reward: 170000,
+      title: '奥运测试赛：用地铁疏散观众', desc: '模拟：让吴泾主体育场周末至少 25% 的到访出行乘地铁。' },
+    connection('sh-olympic-legacy', [2041, 1], [2045, 12], 220000, '赛后遗产：吴泾和奉贤新城', '模拟：把转作居住区的奥运村、奉贤新城南桥商圈和奉贤海湾大学城接入同一个线网。', [f('oly_village', 3), f('nanqiao_bailian', 3), f('haiwan_uni', 3)]),
+  );
   // 位置校正：与 OSM 地铁站同名的设施与任务锚点，改用车站位置（相距 3 km 以内时；手填坐标的误差可达数百米）
   const ST = {}; for (const p of G.places || []) if (p[3] === 0 && !ST[p[0]]) ST[p[0]] = p;
   const nearSt = function (name, x, y) { const p = ST[name.replace(/（.*?）/g, '')]; return p && Math.hypot(p[1] - x, p[2] - y) < 12 ? p : null; };
-  for (const f of data.facilities) if (f.at) { const p = nearSt(f.n, f.at[0], f.at[1]); if (p) f.at = [p[1], p[2]]; }
-  for (const t of data.histTasks.concat(data.dynTasks)) for (const a of t.anchors || []) { const p = nearSt(a.name, a.x, a.y); if (p) { a.x = p[1]; a.y = p[2]; } }
+  for (const f of data.facilities) if (f.at && !f.fixedSite) { const p = nearSt(f.n, f.at[0], f.at[1]); if (p) f.at = [p[1], p[2]]; }
+  for (const t of data.histTasks.concat(data.dynTasks)) for (const a of t.anchors || []) if (!a.fixedSite) { const p = nearSt(a.name, a.x, a.y); if (p) { a.x = p[1]; a.y = p[2]; } }
 
   (CM.MAP_LIST = CM.MAP_LIST || []).push({
     id: 'sh', name: '上海', title: '上海 · 1990', sub: '真实地理 · 1990 年起 · 人民币',
@@ -447,7 +558,7 @@
     extent: [
       { from: 1, dx: 0, dy: 0, oldW: 124, oldH: 136, newW: 152, newH: 152, note: '地图向东扩大到川沙、曹路，向南扩大到梅陇、康桥一带',
         oldRegionIds: oldRegionIds.filter(id => id !== 'chuansha' && id !== 'disney'), oldLandmarkIds: oldLandmarkIds.filter(id => id !== 'sh_disney') },
-      { from: 2, dx: oldOffset[0], dy: oldOffset[1], oldW: 152, oldH: 152, newZone: 16, oldRegionIds, oldLandmarkIds,
+      { from: 2, dx: oldOffset[0], dy: oldOffset[1], oldW: oldSize, oldH: oldSize, newZone: 16, oldRegionIds, oldLandmarkIds,
         note: '上海扩展至全市 16 区，新增近郊和远郊分别于 2015、2020 年开放' },
     ],
     region: '中国内地', tagline: '浦江两岸，从零开始的超大网络', difficulty: 3, tags: ['无地铁开局', '越江', '超大城市'],

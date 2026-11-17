@@ -64,6 +64,26 @@ assert.ok(city.waterDistAt(...point(31.44, 121.74)) < 0, 'Yangtze channels remai
 
 const listed = Fac.list(city);
 const facility = id => listed.find(f => f.id === id);
+assert.equal(listed.some(f => f.gen), false, 'Shanghai uses named sites throughout the municipality');
+const named = DATA.facilities.filter(f => f.fixedSite);
+for (const s of named) {
+  const f = facility(s.id), c = city.cellAt(f.x, f.y);
+  assert.ok(c >= 0 && city.landFrac[c] >= 0.5 && !afterFar[c], s.id + ' must be inside real, buildable Shanghai land');
+  assert.ok(s.note, s.id + ' must explain the location');
+}
+for (const [id, t, region] of [
+  ['jiading_baolong', 'shop', 'jiading_new'], ['songjiang_inc', 'shop', 'songjiang'],
+  ['qingpu_wanda', 'shop', 'qingpu'], ['nanqiao_bailian', 'shop', 'fengxian'],
+  ['lingang_gangcheng', 'shop', 'lingang'], ['songjiang_uni', 'uni', 'songjiang'],
+  ['zhangjiang_uni', 'uni', 'jinqiao'], ['minhang_uni', 'uni', 'minhang_new'],
+  ['zizhu', 'cbd', 'minhang_new'], ['sheshan', 'scenic', 'songjiang'],
+  ['chongming_air', 'air', 'chongming'],
+]) {
+  const f = facility('sh_' + id);
+  assert.equal(f.t, t);
+  const actual = city.regionAt(f.x, f.y).id;
+  assert.ok(actual === region || (region === 'minhang_new' && actual === 'wujing'), id + ': ' + actual);
+}
 for (const id of ['sh_pvg_terminal', 'sh_songjiang_station', 'sh_east_station', 'sh_baoshan_station',
   'sh_oly_stadium', 'sh_oly_aquatics', 'sh_oly_arena', 'sh_oly_village']) {
   const f = facility(id), c = city.cellAt(f.x, f.y);
@@ -73,12 +93,84 @@ for (const id of ['sh_pvg_terminal', 'sh_songjiang_station', 'sh_east_station', 
 assert.equal(facility('sh_pvgair').close, 2015);
 assert.equal(facility('sh_pvg_terminal').open, 2015);
 assert.equal(facility('sh_east_station').open, 2027.5);
+assert.ok(!Fac.active(facility('sh_chongming_air'), 2034.99, city));
+assert.ok(Fac.active(facility('sh_chongming_air'), 2035, city));
+assert.equal(Fac.pax(facility('sh_chongming_air'), 2035), 170_000);
+assert.equal(Fac.pax(facility('sh_chongming_air'), 2040), Fac.pax(facility('sh_hqair'), 2040));
+assert.equal(Fac.pax(facility('sh_pvg_terminal'), 2025), 200_000);
+assert.equal(Fac.pax(facility('sh_hqair'), 2025), 133_000);
+assert.equal(Fac.pax(facility('sh_hqstation'), 2024), 400_000);
+assert.ok(Fac.pax(facility('sh_hqstation'), 2026) > Fac.pax(facility('sh_station'), 2026));
+assert.ok(Fac.pax(facility('sh_west'), 2026) < Fac.pax(facility('sh_south'), 2026) / 5);
+assert.ok(Fac.pax(facility('sh_pvg_terminal'), 2022) < Fac.pax(facility('sh_pvg_terminal'), 2023));
+for (const rw of DATA.runways.filter(r => r.from === 2035)) for (let t = 0; t <= 1; t += 0.125) {
+  const [x, y] = rw.a.map((v, i) => v + (rw.b[i] - v) * t);
+  assert.ok(city.landFrac[city.cellAt(x, y)] >= 0.5 && city.regionAt(x, y).id === 'chongming');
+}
+assert.equal(DATA.runways.filter(r => r.from === 2035).length, 2);
+assert.ok(DATA.events.some(e => e.y === 2035 && e.tag === '模拟' && e.title === '崇明国际机场启用'));
 const stadia = DATA.landmarks.filter(l => l.id.startsWith('sh_oly_'));
 city.activateLandmarks(2038);
 for (const l of stadia) assert.equal(city.landmarkOn[DATA.landmarks.indexOf(l)], 1);
 assert.ok(Fac.share(facility('sh_oly_stadium'), 2040 + 7 / 12) > Fac.share(facility('sh_oly_stadium'), 2039) * 5);
 assert.equal(CM.U.interp(CFG.growth.popCurve, 2040), 35_000_000);
 console.log('PASS Shanghai administrative coverage, release dates, Olympic state and hub dates');
+
+const modern = DATA.histTasks.filter(t => t.appear[0] >= 2021);
+assert.equal(new Set(DATA.histTasks.map(t => t.id)).size, DATA.histTasks.length);
+assert.ok(modern.some(t => t.appear[0] === 2021));
+assert.ok(modern.some(t => t.deadline[0] === 2045));
+for (const task of modern) {
+  assert.ok(CM.U.ymIndex(...task.appear) < CM.U.ymIndex(...task.deadline), task.title);
+  if (task.fac) assert.ok(facility(task.fac).open <= task.appear[0] + (task.appear[1] - 1) / 12);
+  for (const a of task.anchors || []) {
+    const c = city.cellAt(a.x, a.y);
+    assert.ok(c >= 0 && city.landFrac[c] >= 0.5 && !afterFar[c], task.id + ' / ' + a.name);
+  }
+}
+console.log('PASS 2021–2045 task dates, facility timing and map anchors');
+
+// An imported dense strip beside rural land: the discontinuity falls while
+// both citywide totals, protected land and the actual river stay intact.
+const { x: edgeX, y: edgeY, size, band } = DATA.extentSeam;
+const row = edgeY + Math.floor(size / 2);
+city.pop = new Float32Array(city.N);
+city.jobs = new Float32Array(city.N);
+city.street = new Uint8Array(city.N);
+city.urbanYear = new Uint16Array(city.N);
+city.bh = new Float32Array(city.N);
+const seam = Object.create(city);
+seam.crossesRiver = (x0, y0, x1, y1) => y0 < row - 2 && y1 >= row - 2;
+seam.lu = new Uint8Array(city.N);
+seam.plan = new Uint8Array(city.N).fill(CM.LU.RES);
+seam.landFrac = new Float32Array(city.N).fill(1);
+seam.isPark = new Uint8Array(city.N);
+seam.region = new Uint8Array(city.N).fill(city.regions.findIndex(r => r.id === 'outer'));
+seam.protectedId = new Uint8Array(city.N);
+seam.taken = new Float32Array(city.N);
+for (let y = row - 2; y <= row + 2; y++) for (let x = edgeX - band - 1; x < edgeX + band; x++) {
+  const c = y * seam.W + x;
+  seam.pop[c] = x < edgeX ? 50 : 500;
+  seam.jobs[c] = x < edgeX ? 10 : 100;
+}
+const center = row * seam.W + edgeX, park = center + seam.W + 3, water = center + 2 * seam.W;
+seam.isPark[park] = 1;
+seam.pop[park] = seam.jobs[park] = 0;
+seam.landFrac[water] = 0;
+seam.pop[water] = seam.jobs[water] = 0;
+const before = seam.totals();
+seam.extentReconciled = false;
+seam.reconcileExtent(2021);
+assert.ok(Math.abs(seam.totals().pop - before.pop) < 0.01);
+assert.ok(Math.abs(seam.totals().jobs - before.jobs) < 0.01);
+assert.ok(Math.abs(seam.pop[center] - seam.pop[center - 1]) < 150);
+assert.equal(seam.pop[park], 0);
+assert.equal(seam.pop[water], 0);
+assert.equal(seam.pop[center - band - 1], 50);
+const after = seam.pop[center];
+seam.reconcileExtent(2021);
+assert.equal(seam.pop[center], after);
+console.log('PASS saved map density transition conserves totals and respects water and parks');
 
 const width = 24;
 const vertexWidth = width + 1;

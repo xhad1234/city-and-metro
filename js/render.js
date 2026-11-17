@@ -2625,6 +2625,7 @@
     for (let c = 0; c < N; c++) {
       const pc = city.pop[c], jc = city.jobs[c], L = city.lu[c], com = L === LU.COM || L === LU.MIX;
       if (q === 'hw') w[c] = jc;
+      else if (q === 'hb') w[c] = pc + jc * (com ? 0.6 : 0.2);
       else if (q === 'all') w[c] = pc + jc;
       else if (excl && excl[c]) w[c] = 0;
       else if (q === 'sc') w[c] = pc * 0.25 + (L === LU.INST ? jc * 1.2 : 0);
@@ -2634,14 +2635,35 @@
     }
     return w;
   };
-  Renderer.prototype.zoneToCells = function (zv, w) {
-    const model = this.game.model, out = new Float32Array(this.game.city.N);
+  Renderer.prototype.zoneToCells = function (zv, w, blend) {
+    const model = this.game.model, city = this.game.city, out = new Float32Array(city.N);
+    const rate = blend ? new Float64Array(model.Z).fill(-1) : null;
+    let total = 0;
     for (let z = 0; z < model.Z; z++) {
       const cs = model.zoneCells[z]; let s = 0;
-      for (const c of cs) s += w[c];
-      if (!(s > 0) || !(zv[z] > 0)) continue;
-      for (const c of cs) out[c] = zv[z] * w[c] / s;
+      for (const c of cs) if (!blend || city.landFrac[c] >= 0.5) s += w[c];
+      if (!(s > 0)) continue;
+      if (rate) { rate[z] = zv[z] / s; total += zv[z]; }
+      else if (zv[z] > 0) for (const c of cs) out[c] = zv[z] * w[c] / s;
     }
+    if (!rate || !total) return out;
+    // Blend trips per unit of land-use attraction between zone centres. The
+    // local land-use mix still determines where heat appears and water stays clear.
+    const W = city.W, ZS = CFG.ZONE, zw = model.ZW, zh = model.Z / zw;
+    let sum = 0;
+    for (let c = 0; c < out.length; c++) {
+      if (!w[c] || city.landFrac[c] < 0.5) continue;
+      const x = c % W, y = (c - x) / W;
+      const fx = U.clamp((x + 0.5) / ZS - 0.5, 0, zw - 1), fy = U.clamp((y + 0.5) / ZS - 0.5, 0, zh - 1);
+      const i = Math.floor(fx), j = Math.floor(fy), tx = fx - i, ty = fy - j;
+      let a = 0, b = 0;
+      for (let dy = 0; dy <= 1 && j + dy < zh; dy++) for (let dx = 0; dx <= 1 && i + dx < zw; dx++) {
+        const r = rate[(j + dy) * zw + i + dx], t = (dy ? ty : 1 - ty) * (dx ? tx : 1 - tx);
+        if (r >= 0) { a += r * t; b += t; }
+      }
+      if (b) { out[c] = w[c] * a / b; sum += out[c]; }
+    }
+    if (sum > 0) for (let c = 0; c < out.length; c++) out[c] *= total / sum;
     return out;
   };
   Renderer.prototype.buildHeat = function () {
@@ -2673,7 +2695,7 @@
           const mult = LO.facDt === 'we' ? model.weekendMult(model.year)[5] : 1;
           for (let i = 0; i < Z; i++) for (let k = od.start[i]; k < od.start[i + 1]; k++) zv[i] += 2 * t5[k] * mult;
         } else zv = fd.dest.subarray(qi * Z, qi * Z + Z);
-        const cv = this.zoneToCells(zv, this.cellWeights(q));
+        const cv = this.zoneToCells(zv, this.cellWeights(q), !!D.extentSeam);
         for (let c = 0; c < city.N; c++) { facCell[c] += cv[c]; if (cv[c] > best[c]) { best[c] = cv[c]; facDom[c] = qi; } }
       }
     }
@@ -2734,7 +2756,7 @@
       let col = null, a = 0;
       const p = city.pop[c] / 0.0625, jb = city.jobs[c] / 0.0625;
       if (lay === 'fac') {
-        if (facCell) { const v = facCell[c] / 0.0625; if (v > 150) { const t = U.clamp(Math.sqrt(v / 40000), 0, 1); col = U.hex2rgb(AX.category(facDom[c], TR.color[PK[facDom[c]]] || '#888888')); a = 0.1 + 0.42 * t; } }
+        if (facCell) { const v = facCell[c] / 0.0625; if (v > 150) { const t = U.clamp(Math.sqrt(v / 40000), 0, 1); col = U.hex2rgb(AX.category(facDom[c], TR.color[PK[facDom[c]]] || '#888888')); a = (0.1 + 0.42 * t) * (D.extentSeam ? U.clamp((v - 150) / 250, 0, 1) : 1); } }
       } else if (lay === 'gap') {
         if (gapCell) { const v = gapCell[c] / 0.0625; if (v > 400) { const t = U.clamp(Math.sqrt(v / 60000), 0, 1); col = AX.ramp([[0, [255, 214, 170]], [0.5, [236, 112, 72]], [1, [180, 24, 34]]], t); a = 0.12 + 0.45 * t; } }
       } else if (lay === 'cover' && LO.cover === 'station') {

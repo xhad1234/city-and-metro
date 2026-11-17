@@ -43,6 +43,7 @@
   City.prototype.generateGen = function* (seed, startYear, opts) {
     const W = this.W, H = this.H, N = this.N, ds = (opts && opts.densityScale) || 1;
     this.seed = seed;
+    this.extentReconciled = true;
     this.regions = D.regions.concat([D.defaultRegion]);
     for (const r of this.regions) if (r.plan0) r.plan = r.plan0;   // 上一局改变过的片区规划（applyReplan）恢复原样
     this.regionOpen = new Uint8Array(this.regions.length);
@@ -902,11 +903,12 @@
     });
     this.scenicHost = host;
   };
+  const landmarkDate = lm => lm.year + ((lm.month || 1) - 1) / 12;
   City.prototype.activateLandmarks = function (year) {
     let changed = false;
     for (let k = 0; k < D.landmarks.length; k++) {
       const lm = D.landmarks[k];
-      if (this.landmarkOn[k] || lm.year > year) continue;
+      if (this.landmarkOn[k] || landmarkDate(lm) > year) continue;
       const c0 = this.cellAt(lm.x, lm.y);
       if (c0 >= 0 && this.landFrac[c0] < 0.5 && !lm.shore) continue;   // shore（v2.8）：紧贴水边的地标，所在格按面积算是水面，也要立在真实位置
       this.landmarkOn[k] = 1; changed = true;
@@ -1660,6 +1662,7 @@
     };
     if (D.terrainRevision) out.terrainRevision = D.terrainRevision;
     if (D.displayRevision) out.displayRevision = D.displayRevision;
+    if (D.extentSeam && this.extentReconciled) out.extentReconciled = true;
     out.lockRule = 2;
     return out;
   };
@@ -1689,6 +1692,53 @@
     for (let c = 0; c < this.N; c++) if (mask[c]) { this.pop[c] *= fP; this.jobs[c] *= fJ; }
     this.filled = { year: year, cells: n, fP: +fP.toFixed(3), fJ: +fJ.toFixed(3) };
     return n;
+  };
+  // 扩图旧档原范围内是多年演进的城区，外侧则是一次生成的城市。只修补交界带：
+  // 在相邻陆地格间交换人口和岗位，市内总量不变，且不穿过河道、机场、公园或受保护格。
+  City.prototype.reconcileExtent = function (year) {
+    const seam = D.extentSeam;
+    if (this.extentReconciled || !seam || year < seam.from) return;
+    const { x, y, size, band } = seam, W = this.W, H = this.H;
+    const x0 = Math.max(0, x - band), x1 = Math.min(W, x + size + band);
+    const y0 = Math.max(0, y - band), y1 = Math.min(H, y + size + band);
+    const a = this.pop, b = this.jobs, strength = new Float32Array(this.N), cells = [], edges = [];
+    const eligible = c => this.landFrac[c] >= 0.5 && this.regionOpen[this.region[c]] &&
+      !this.regions[this.region[c]].empty && !this.isPark[c] && !this.protectedId[c] && !this.taken[c] &&
+      (this.lu[c] <= LU.MIX || this.lu[c] === LU.INST);
+    for (let j = y0; j < y1; j++) for (let i = x0; i < x1; i++) {
+      const h = Math.max(x - i - 0.5, i + 0.5 - x - size), v = Math.max(y - j - 0.5, j + 0.5 - y - size);
+      const d = Math.abs(Math.max(h, v)), c = j * W + i;
+      if (d >= band || !eligible(c)) continue;
+      strength[c] = 1 - (d / band) ** 2; cells.push(c);
+    }
+    for (const c of cells) {
+      const i = c % W, j = (c - i) / W;
+      for (const n of [i + 1 < x1 ? c + 1 : -1, j + 1 < y1 ? c + W : -1]) {
+        if (n < 0 || !strength[n]) continue;
+        const nx = n % W, ny = (n - nx) / W;
+        if (this.crossesRiver(i + 0.5, j + 0.5, nx + 0.5, ny + 0.5)) continue;
+        edges.push([c, n, 0.19 * Math.min(strength[c], strength[n])]);
+      }
+    }
+    const dp = new Float64Array(this.N), dj = new Float64Array(this.N);
+    for (let pass = 0; pass < 18; pass++) {
+      for (const [c, n, w] of edges) {
+        const p = (a[n] - a[c]) * w, j = (b[n] - b[c]) * w;
+        dp[c] += p; dp[n] -= p; dj[c] += j; dj[n] -= j;
+      }
+      for (const c of cells) { a[c] += dp[c]; b[c] += dj[c]; dp[c] = 0; dj[c] = 0; }
+    }
+    for (const c of cells) {
+      // Use the same urbanisation threshold as monthly growth, with a small
+      // deterministic spread so adjacent cells do not form a new straight edge.
+      const density = a[c] + b[c], threshold = 135 + 50 * U.hash2(c, 17, this.seed);
+      if (this.lu[c] === LU.RURAL && density >= threshold) {
+        this.lu[c] = this.plan[c] === LU.PARK ? LU.RES : this.plan[c]; this.street[c] = 1;
+        if (!this.urbanYear[c]) this.urbanYear[c] = Math.floor(year);
+      }
+      this.bh[c] = this.heightFor(c, year);
+    }
+    this.extentReconciled = true;
   };
   City.prototype.restore = function (s, year) { const it = this.restoreGen(s, year); let r = it.next(); while (!r.done) r = it.next(); };
   City.prototype.restoreGen = function* (s, year) {
@@ -1723,7 +1773,7 @@
     const on = byIds(s.landmarkIds, lIds, s.landmarkOn || []).map(function (v, k) {
       if (v !== undefined) return v;
       const lm = D.landmarks[k], c = self.cellAt(lm.x, lm.y);
-      return fill && c >= 0 && fill[c] && lm.year <= fy ? 1 : 0;
+      return fill && c >= 0 && fill[c] && landmarkDate(lm) <= year ? 1 : 0;
     });
     // sited：场地内至少有一格在存档里是地标用地（与相邻地标共用的格也算，如星海音乐厅与广东美术馆共用一格，
     // 共用格的编号归表中靠后的地标，靠前的一个不能因此被当成「已迁址」熄灭）
@@ -1766,8 +1816,17 @@
         this.lu[c] = LU.RURAL; this.plan[c] = this.planFor(c); this.bh[c] = 0;
       }
     }
+    // 同范围修订中采用同一底图；把已到启用年的迁址地标立即恢复到新址。
+    if ((s.terrainRevision || 1) < (D.terrainRevision || 1)) for (let k = 0; k < D.landmarks.length; k++) {
+      const lm = D.landmarks[k], c = this.cellAt(lm.x, lm.y);
+      if (!lm.fixedSite || landmarkDate(lm) > year || c < 0 || this.landFrac[c] < 0.5) continue;
+      this.landmarkOn[k] = 1;
+      this.protectLandmark(k, null);
+    }
     // Newly defined park / protected areas retain their intended land use after upgrade.
     for (let c = 0; c < N; c++) if (this.regions[this.region[c]].park && this.landFrac[c] >= 0.5 && this.lu[c] === LU.RURAL) { this.lu[c] = this.plan[c] = LU.PARK; this.isPark[c] = 1; }
+    this.extentReconciled = !!s.extentReconciled;
+    this.reconcileExtent(year);
     this.eArt.fill(0); this.eName.fill(0); this.roadsBuilt.fill(0);
     yield;
     yield* this.applyRoadsGen(year);

@@ -149,7 +149,7 @@
       let roads = false;
       for (const r of city.applyReclaim(y)) { roads = true; this.logEvent({ tag: r.tag || '史实', title: '填海成陆：' + r.name, desc: r.desc || '' }); }
       if (city.applyRoads(y)) roads = true;
-      city.activateLandmarks(y);
+      city.activateLandmarks(yr);
       const tot = city.totals();
       for (let k = 0; k < city.regions.length; k++) {
         const rg = city.regions[k];
@@ -412,7 +412,7 @@
       });
     }
     const lmBefore = city.landmarkOn.slice();
-    city.activateLandmarks(y);
+    city.activateLandmarks(yr);
     if (CM.Milestones) CM.Milestones.onLandmarks(this, lmBefore);
     // 区域开放
     let regionOpened = false;
@@ -931,7 +931,7 @@
       if (CM.applyMoneyEra) CM.applyMoneyEra(g.clock.y, g.clock.m);
       g.city = new CM.City();
       yield* g.city.generateGen(g.seed, CFG.START.y, {deferGraphs:true});
-      yield* g.city.restoreGen(s.city, g.clock.y);
+      yield* g.city.restoreGen(s.city, g.year());
       // 全图解锁要在编译线网之前恢复：线路几何带有可建设范围的判断（玩家反馈：读档后已建线路在未开放区段报冲突）
       g.unlockAll = !!s.unlockAll && g.mode === 'free'; g.city.unlockAll = g.unlockAll;
       lp(0.3, '恢复城市');

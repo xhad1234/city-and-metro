@@ -1,4 +1,4 @@
-"""Extend the original Shanghai map with OpenStreetMap data (ODbL).
+"""Build the expanded Shanghai map from uniform OpenStreetMap data (ODbL).
 
 Pass the original geo_sh.js, OSMCoastline's simplified_land_polygons.shp,
 and Geofabrik extracts for Shanghai, Jiangsu and Zhejiang, in that order.
@@ -155,11 +155,11 @@ class Extract(osmium.SimpleHandler):
                 if not line.is_closed and line.project(Point(shore.coords[0])) > line.project(Point(shore.coords[-1])):
                     shore = LineString(list(shore.coords)[::-1])
                 self.coast.append(shore)
-        if line.within(CORE) or not (road or street or rail or water):
+        if not (road or street or rail or water):
             return
         flags = int(t.get('bridge', 'no') != 'no') | (2 if t.get('tunnel', 'no') != 'no' else 0)
         name = self.name(source_name(t)) if road or rail or water else 0
-        for piece in parts(line.intersection(PERIMETER).simplify(0.035), 'LineString'):
+        for piece in parts(line.intersection(FRAME).simplify(0.035), 'LineString'):
             if piece.length < 0.06:
                 continue
             encoded = encode(piece.coords)
@@ -206,9 +206,7 @@ class Extract(osmium.SimpleHandler):
             if not clip.is_empty:
                 self.admin[(admin, name)] = clip
             return
-        if geom.within(CORE):
-            return
-        for poly in parts(geom.intersection(PERIMETER).simplify(0.05), 'Polygon'):
+        for poly in parts(geom.intersection(FRAME).simplify(0.05), 'Polygon'):
             if poly.area >= (0.06 if key == 'water' else 0.13):
                 self.out[key].append([self.name(name), *rings(poly)])
 
@@ -226,7 +224,7 @@ class Extract(osmium.SimpleHandler):
         if not name or not node.location.valid():
             return
         x, y = project(node.lon, node.lat)
-        if not in_frame(x, y) or CORE.covers(Point(x, y)):
+        if not in_frame(x, y):
             return
         self.ids['nodes'].add(node.id)
         key = name, kind, round(x / 2), round(y / 2)
@@ -280,7 +278,7 @@ class Extract(osmium.SimpleHandler):
                 land.append(poly)
             elif abs(vote) < .01:
                 land.append(poly.intersection(land_ref))
-        offshore = PERIMETER.difference(union_all(land))
+        offshore = FRAME.difference(union_all(land))
         for poly in parts(offshore.simplify(0.03), 'Polygon'):
             if poly.area >= 0.05:
                 self.out['water'].insert(0, [self.name('长江口·杭州湾'), *rings(poly)])
@@ -306,17 +304,12 @@ def reference_land(filename):
 
 
 def shift_core(out):
-    # Retain the original geometry and save coordinates in the established main map.
-    for layer, col in [('roads', 3), ('rail', 2)]:
-        for row in out[layer]:
-            row[col] = encode(decode(row[col]))
-    out['streets'] = [encode(decode(s)) for s in out['streets'].split('!')]
-    for layer in ('water', 'parks', 'reserves', 'woods'):
-        for row in out[layer]:
-            if layer == 'water' and isinstance(row[1], (int, float)):
-                row[2] = encode(decode(row[2]))
-                continue
-            row[1:] = [s[0] + encode(decode(s[1:])) for s in row[1:]]
+    # Keep the historical region boundaries and curated heritage shapes; use
+    # one extraction for the physical map so features can cross the old edge.
+    for layer in ('roads', 'rail', 'streets', 'water', 'parks', 'woods', 'places'):
+        out[layer] = []
+    for row in out['reserves']:
+        row[1:] = [s[0] + encode(decode(s[1:])) for s in row[1:]]
     old_admin, out['admin'] = out['admin'], []
     for level, name, *raw in old_admin:
         # An outer ring may be followed by its holes, then another outer ring.
@@ -333,15 +326,12 @@ def shift_core(out):
             geom = make_valid(Polygon(outer, holes)).intersection(CORE)
             for poly in parts(geom, 'Polygon'):
                 out['admin'].append([level, name_id, *rings(poly)])
-    for place in out['places']:
-        place[1] = round(place[1] + DX, 2)
-        place[2] = round(place[2] + DY, 2)
 
 
 def render(out):
     print("'use strict';")
     print('// OpenStreetMap contributors, ODbL. 250 m cells, 1/64 cell delta encoding.')
-    print('// Original city core extended with Geofabrik extracts and OSMCoastline.')
+    print('// Citywide Geofabrik and OSMCoastline geometry; original grid projection and historical regions.')
     print('(function (CM) {\n  (CM.GEOS = CM.GEOS || {}).sh = {')
     def compact(value):
         return json.dumps(value, ensure_ascii=False, separators=(',', ':'))
