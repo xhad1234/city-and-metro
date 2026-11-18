@@ -110,7 +110,7 @@
     return { dist: new Float64Array(G.nN), dkm: new Float32Array(G.nN), pred: new Int32Array(G.nN), order: new Int32Array(G.nN), accN: new Float64Array(G.nN), heapK: new Float64Array(G.nA + 4), heapV: new Int32Array(G.nA + 4), mark: new Int32Array(G.nN), stamp: 0 };
   }
   // 工作线程入口：收到道路图（每次路网变化一次）与计算块，逐起点计算并回传（缓冲区转移，不复制）。
-  // 稀疏块用 JavaScript 提前结束，稠密块仍可由现有 WASM 内核计算。
+  // WASM 与 JavaScript 都只计算需求表上的终点，并使用相同的提前结束条件。
   function carWorkerMain() {
     let G = null, W = null, kernel = null, module = null;
     onmessage = function (e) {
@@ -120,20 +120,15 @@
       if (!G || G.id !== m.gid) { postMessage({ req: m.req, b: m.b, stale: true }); return; }
       // 本块各起点需要的终点：tDest[tStart[i]..tStart[i+1])，需求 dem 与之对齐；结果也只回传这些终点（v2.7.1）
       const n = m.origins.length, tStart = m.tStart, tDest = m.tDest, nt = tDest.length;
-      const rowsT = new Float32Array(nt).fill(NaN), rowsK = new Float32Array(nt).fill(NaN);
-      if (module && nt >= n * G.Z * 0.75) {
+      if (module) {
         try {
           if (!kernel) kernel = roadKernelWorker(module, G);
-          const dense = new Float32Array(n * G.Z);
-          for (let i = 0; i < n; i++) for (let q = tStart[i]; q < tStart[i + 1]; q++) dense[i * G.Z + tDest[q]] = m.dem[q];
-          const result = kernel.solve({ origins: m.origins, dem: dense, time: m.time });
-          for (let i = 0; i < n; i++) for (let q = tStart[i]; q < tStart[i + 1]; q++) {
-            const k = i * G.Z + tDest[q]; rowsT[q] = result.rowsT[k]; rowsK[q] = result.rowsK[k];
-          }
-          postMessage({ req: m.req, b: m.b, rowsT, rowsK, aux: result.aux, kernel: true }, [rowsT.buffer, rowsK.buffer, result.aux.buffer]);
+          const { rowsT, rowsK, aux } = kernel.solve(m);
+          postMessage({ req: m.req, b: m.b, rowsT, rowsK, aux, kernel: true }, [rowsT.buffer, rowsK.buffer, aux.buffer]);
           return;
         } catch (e) { module = kernel = null; }
       }
+      const rowsT = new Float32Array(nt).fill(NaN), rowsK = new Float32Array(nt).fill(NaN);
       if (!W) W = carWork(G);
       const aux = new Float32Array(G.nA);
       for (let i = 0; i < n; i++) carOriginRow(G, m.time, m.origins[i], tDest, tStart[i], tStart[i + 1], m.dem, W, rowsT, rowsK, 0, aux);

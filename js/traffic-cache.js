@@ -2,7 +2,12 @@
 // Optional, bounded browser cache. Game saves remain complete and independent.
 (function(CM){
   const compact=(navigator.deviceMemory&&navigator.deviceMemory<=4)||matchMedia('(pointer:coarse)').matches;
-  const MAX_ENTRY=(compact?24:64)*1024*1024,MAX_TOTAL=(compact?48:128)*1024*1024,MAX_COUNT=2;
+  // 上海 1 km 分区的八时段道路表可超过 130 MiB，桌面缓存需要容纳完整求解状态。
+  const MiB = 1024 * 1024;
+  const MAX_ENTRY = (compact ? 24 : 224) * MiB;
+  const MAX_TOTAL = (compact ? 48 : 320) * MiB;
+  const MAX_COUNT = 2;
+  const ioTimeout = compact ? 1500 : 5000;
   const scalars=['dt','stats','iters','solveSteps','quiet','stable','demandTotal','error','facKey','reviewLimit'];
   let dbPromise,currentDb,chain=Promise.resolve(),leasedBytes=0;const pending=new Map(),verified=new WeakSet(),leases=new WeakMap();
   const clone=x=>JSON.parse(JSON.stringify(x));
@@ -61,7 +66,7 @@
   function digestBuf(buf){
     const w=hashWorker();
     if(!w)return digest(buf).then(hex=>({hex,buf}),()=>({hex:null,buf}));
-    return new Promise(resolve=>{const id=++hseq,timer=setTimeout(failHash,1500);hwait.set(id,m=>{clearTimeout(timer);resolve(m?{hex:m.hex,buf:m.buf}:{hex:null,buf:buf});});try{w.postMessage({id,buf},[buf]);}catch(e){hwait.delete(id);clearTimeout(timer);digest(buf).then(hex=>resolve({hex,buf}),()=>resolve({hex:null,buf}));}});
+    return new Promise(resolve=>{const id=++hseq,timer=setTimeout(failHash,buf.byteLength>64*MiB?ioTimeout:1500);hwait.set(id,m=>{clearTimeout(timer);resolve(m?{hex:m.hex,buf:m.buf}:{hex:null,buf:buf});});try{w.postMessage({id,buf},[buf]);}catch(e){hwait.delete(id);clearTimeout(timer);digest(buf).then(hex=>resolve({hex,buf}),()=>resolve({hex:null,buf}));}});
   }
   async function keyFor(body){try{return await digest(new TextEncoder().encode(body));}catch(e){return null;}}
   const metaDigest=(meta,dataHash)=>digest(new TextEncoder().encode(JSON.stringify(meta)+':'+dataHash));
@@ -97,7 +102,9 @@
       try{
         const db=await open();if(!db)return false;const hr=await digestBuf(snapshot.data);snapshot.data=hr.buf;if(!hr.hex||!snapshot.data.byteLength)return false;const dataHash=hr.hex,metaHash=await metaDigest(snapshot.meta,dataHash);
         await transaction(db,['entries','lru'],'readwrite',tx=>{
-          tx.objectStore('entries').put({...snapshot,dataHash,metaHash},k);
+          // Store large payloads as blobs so IndexedDB can keep them separate from the record metadata.
+          const data = snapshot.data.byteLength > 64 * MiB ? new Blob([snapshot.data]) : snapshot.data;
+          tx.objectStore('entries').put({meta:snapshot.meta,data,dataHash,metaHash},k);
           tx.objectStore('lru').put({key:k,bytes:snapshot.data.byteLength,used:Date.now()});
           const request=tx.objectStore('lru').index('used').getAll();
           request.onsuccess=()=>{const rows=request.result;let bytes=rows.reduce((n,row)=>n+row.bytes,0),count=rows.length;for(const row of rows)if(bytes>MAX_TOTAL||count>MAX_COUNT){tx.objectStore('entries').delete(row.key);tx.objectStore('lru').delete(row.key);bytes-=row.bytes;count--;}};
@@ -110,11 +117,19 @@
     if(!CM.SIM_STAMP||!checksum)return null;const k=key(checksum);
     try{
       if(pending.has(k)){
-        let timer;try{if(!await Promise.race([pending.get(k),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),1500);})]))return null;}finally{clearTimeout(timer);}
+        let timer;try{if(!await Promise.race([pending.get(k),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),ioTimeout);})]))return null;}finally{clearTimeout(timer);}
       }
       const db=await open();if(!db)return null;
-      const record=await transaction(db,'entries','readonly',tx=>{let value;const request=tx.objectStore('entries').get(k);request.onsuccess=()=>{value=request.result;};return()=>value;});
-      if(!record||record.meta.schema!==2||record.meta.stamp!==CM.SIM_STAMP||!(record.data instanceof ArrayBuffer)||record.data.byteLength>MAX_ENTRY)return null;
+      const record=await transaction(db,'entries','readonly',tx=>{let value;const request=tx.objectStore('entries').get(k);request.onsuccess=()=>{value=request.result;};return()=>value;},ioTimeout);
+      if(!record||record.meta.schema!==2||record.meta.stamp!==CM.SIM_STAMP)return null;
+      if (record.data instanceof Blob) {
+        if (record.data.size > MAX_ENTRY) return null;
+        let timer;
+        try {
+          record.data = await Promise.race([record.data.arrayBuffer(), new Promise(resolve => { timer = setTimeout(() => resolve(null), ioTimeout); })]);
+        } finally { clearTimeout(timer); }
+      }
+      if (!(record.data instanceof ArrayBuffer) || record.data.byteLength > MAX_ENTRY) return null;
       const hr=await digestBuf(record.data);record.data=hr.buf;const hash=hr.hex;if(!hash||hash!==record.dataHash||await metaDigest(record.meta,hash)!==record.metaHash)return null;
       transaction(db,['entries','lru'],'readwrite',tx=>{const request=tx.objectStore('entries').getKey(k);request.onsuccess=()=>{if(request.result!==undefined)tx.objectStore('lru').put({key:k,bytes:record.data.byteLength,used:Date.now()});};}).catch(()=>{});verified.add(record);return record;
     }catch(e){return null;}
@@ -126,13 +141,13 @@
       const staged=[];const seen=new Set();
       for(const row of meta.periods){
         if(!['wd','we'].includes(row.dt)||!Number.isInteger(row.p)||row.p<0||row.p>3||seen.has(row.dt+row.p))return false;seen.add(row.dt+row.p);
-        const P=m.ctxs[row.dt].per[row.p],S=row.scalars,E=S.error;m.allocStatArrays(P);m.alignSkims(P,m.od);
+        const P=m.ctxs[row.dt].per[row.p],S=row.scalars,E=S.error;m.allocStatArrays(P);
         if(!Number.isSafeInteger(S.solveSteps)||S.solveSteps<1||!Number.isSafeInteger(S.quiet)||S.quiet<0||typeof S.stable!=='boolean'||![0,6,12].includes(S.reviewLimit)||!E||Object.values(E).some(v=>!Number.isFinite(v))||!S.stats||Object.values(S.stats).some(v=>!Number.isFinite(v))||S.facKey!==m.fn.key)return false;
         const values={},keys=Object.keys(P).filter(k=>ArrayBuffer.isView(P[k]));if(row.arrays.length!==keys.length)return false;
-        for(const a of row.arrays){const old=P[a.name];if(!keys.includes(a.name)||values[a.name]||!old||a.type!==old.constructor.name||a.length!==old.length||!Number.isInteger(a.offset)||a.offset<0||a.offset%old.BYTES_PER_ELEMENT)return false;const v=new old.constructor(record.data,a.offset,a.length);values[a.name]=v;}
+        for(const a of row.arrays){const old=P[a.name];if(!keys.includes(a.name)||values[a.name]||!old||a.type!==old.constructor.name||a.length!==(a.name==='skimT'||a.name==='skimK'?m.od.skim.n:old.length)||!Number.isInteger(a.offset)||a.offset<0||a.offset%old.BYTES_PER_ELEMENT)return false;const v=new old.constructor(record.data,a.offset,a.length);values[a.name]=v;}
         staged.push({P,S,values});
       }
-      for(const {P,S,values}of staged){for(const k of scalars)if(S[k]!==undefined)P[k]=S[k];Object.assign(P,values);P.solveSignature={net:m.net,od:m.od,year:m.year,fare:CM.Model.fareKey(m.fare),road:m.roadVer,habit:m.habitVer||0};}
+      for(const {P,S,values}of staged){for(const k of scalars)if(S[k]!==undefined)P[k]=S[k];Object.assign(P,values);P.skimLay=m.od.skim;P.solveSignature={net:m.net,od:m.od,year:m.year,fare:CM.Model.fareKey(m.fare),road:m.roadVer,habit:m.habitVer||0};}
       verified.delete(record);
       m.computeDaily();m.gen=null;Object.assign(m,C);m.settledAt={year:m.year,fare:CM.Model.fareKey(m.fare),city:m.city.version,road:m.city.roadVersion,net:m.net,od:m.od};g.trafficCacheHit=true;return true;
     }catch(e){return false;}
