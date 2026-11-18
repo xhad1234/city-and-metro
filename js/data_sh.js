@@ -528,6 +528,7 @@
     places: (G.places || []).map(function (p) { return [p[0], p[1], p[2], p[3]]; }),
     stationNames: CM.SH_STATION_NAMES,
     industryFacilities: true,
+    flowBlockCells: 32, // 出行方向图继续按较大范围汇总；不降低实际出行分区精度。
   };
   // 产业园区仅汇总范围内已有岗位的通勤，不额外生成“购物型”园区客流。
   for (const item of CM.SH_INDUSTRY) {
@@ -649,7 +650,7 @@
     id: 'sh', name: '上海', title: '上海 · 1990', sub: '真实地理 · 1990 年起 · 人民币',
     desc: '从 1990 年尚无地铁的上海开始：七百多万人挤在浦西，黄浦江上没有一座桥，浦东开发开放即将宣布。陆家嘴、虹桥枢纽与世博会将陆续到来，地铁要追上中国最大城市的扩张。',
     facts: [['范围', '128 km × 140 km，上海 16 区及昆山花桥镇'], ['起始', '1990 年'], ['人口', '开局约 1360 万，2040 年约 3500 万'], ['货币', '人民币（元）'], ['模式', '经营挑战 / 自由建造']],
-    modes: ['challenge', 'free'], kind: 'real', mapVersion: 4, scenario: 'sh-1990',
+    modes: ['challenge', 'free'], kind: 'real', mapVersion: 5, scenario: 'sh-1990',
     extent: [
       { from: 1, dx: 0, dy: 0, oldW: 124, oldH: 136, newW: 152, newH: 152, note: '地图向东扩大到川沙、曹路，向南扩大到梅陇、康桥一带',
         oldRegionIds: oldRegionIds.filter(id => id !== 'chuansha' && id !== 'disney'), oldLandmarkIds: oldLandmarkIds.filter(id => id !== 'sh_disney') },
@@ -658,6 +659,8 @@
       { from: 3, dx: 0, dy: 0, oldW: 512, oldH: 560, newW: 512, newH: 560, oldZone: 16, newZone: 16,
         oldRegionIds: data.regions.filter(r => r.id !== 'huaqiao').map(r => r.id).concat(data.defaultRegion.id), oldLandmarkIds: data.landmarks.map(l => l.id),
         note: '新增昆山花桥镇及长三角铁路接口，格网与现有站线坐标保持原位' },
+      { from: 4, dx: 0, dy: 0, oldW: 512, oldH: 560, newW: 512, newH: 560, oldZone: 16, newZone: 4, zoneOnly: true,
+        note: '交通小区恢复为1×1公里，任务与招标分区迁移，城市地块及现有站线保持原位' },
     ],
     region: '中国内地', tagline: '浦江两岸，从零开始的超大网络', difficulty: 3, tags: ['无地铁开局', '越江', '超大城市'],
     intro: '从 1990 年的浦西老城区修出第一条线，经黄浦江连接浦东。2015 年开放新增近郊，2020 年开放远郊、崇明三岛及昆山花桥镇。2025 年联动开发崇明与花桥，2027 年进入「喜迎奥运」，2040 年赛事在吴泾滨江举行。',
@@ -668,7 +671,7 @@
     geo: G, data: data,
     econ: { devOffset: 2, money: 1 },   // 出行选择参数：上海 1990 年约对应广州样本 1992 年的发展阶段
     cfg: {
-      W: 512, H: 560, ZONE: 16, START: { y: 1990, m: 1, d: 1, minute: 360 },
+      W: 512, H: 560, ZONE: 4, START: { y: 1990, m: 1, d: 1, minute: 360 },
       growth: Object.assign({}, CM.CFG.growth, { popCurve: [[1990, 13.6e6], [1995, 14.5e6], [2000, 16.41e6], [2005, 17.78e6], [2010, 23.0192e6],
         [2015, 24.15e6], [2020, 24.8709e6], [2021, 24.8943e6], [2022, 24.7589e6], [2023, 24.8745e6], [2024, 24.8026e6], [2027, 24.9e6],
         [2030, 26.6e6], [2035, 30.5e6], [2040, 35e6], [2050, 36.6e6], [2080, 38.0e6], [2300, 38.0e6]],

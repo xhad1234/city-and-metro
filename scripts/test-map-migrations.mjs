@@ -14,11 +14,25 @@ for(const [id,m]of Object.entries(C.MAPS)){
   const dx=applicable.reduce((v,s)=>v+s.dx,0),dy=applicable.reduce((v,s)=>v+s.dy,0),n=e.oldW*e.oldH;
   const old=new Float32Array(n);for(let k=0;k<n;k++)old[k]=k+.25;
   const payload={meta:{map:id,mapVersion:from},clock:{y:m.cfg.START.y,m:2,d:3},city:Object.fromEntries(keys.map(k=>[k,C.U.packTyped(old,'f32')])),net:{stations:{s1:{x:2.5,y:3.5,site:[2.5,3.5],name:'Custom name',angle:30}},segments:{g1:{pts:[[4.5,5.5],[6.5,7.5]],line:'l1',a:'s1',b:'s2'}}},econ:{funds:123456,debt:600},tasks:{active:[{anchors:[{name:'Anchor',x:8,y:9}],zone:1,coolKey:'cong:1'}],done:[],failed:[],cool:{'cov:1':20}},macro:{rec:[]}};
+  const point={x:(e.oldZone||C.MAPS.gz.cfg.ZONE)*1.25,y:(e.oldZone||C.MAPS.gz.cfg.ZONE)*.25};
+  payload.tasks.active[0].parts=[{zone:1,anchors:[{...point}]}];
+  payload.corp={tenders:[{zone:1,area:{...point}}],cool:{'z:1':21}};
   payload.netGone={stations:{old:{x:1.5,y:2.5,built:[1980,1],gone:[1990,2]}},segments:{gone:{pts:[[3.5,4.5]],built:[1980,1],gone:[1990,2],lh:[[1985,3,'l0']]}},lines:{l0:{id:'l0',name:'Retired'}}};
   const body=JSON.stringify(payload),raw=JSON.stringify({format:C.CFG.SAVE_FORMAT,version:2,body,checksum:C.U.fnv(body)}),p=C.Save.parseEnvelope(raw).payload;
   assert.equal(p.netGone.stations.old.x,1.5+dx);assert.equal(p.netGone.stations.old.y,2.5+dy);
   assert.deepEqual(Array.from(p.netGone.segments.gone.pts[0]),[3.5+dx,4.5+dy]);assert.equal(JSON.stringify(p.netGone.segments.gone.lh),'[[1985,3,"l0"]]');
   assert.equal(p.meta.mapVersion,m.mapVersion);assert.equal(p.city.pop.n,m.cfg.W*m.cfg.H);assert.equal(JSON.stringify(payload),body,'Parsing must not alter original input');
+  const pointZone=Math.floor((point.y+dy)/m.cfg.ZONE)*(m.cfg.W/m.cfg.ZONE)+Math.floor((point.x+dx)/m.cfg.ZONE);
+  for(const a of [p.tasks.active[0].parts[0].anchors[0],p.corp.tenders[0].area]){assert.equal(a.x,point.x+dx);assert.equal(a.y,point.y+dy);}
+  assert.equal(p.tasks.active[0].parts[0].zone,pointZone);assert.equal(p.corp.tenders[0].zone,pointZone);assert.equal(p.corp.cool['z:'+pointZone],21);
+  if(e.zoneOnly){
+   for(const key of ['city','net','netGone','econ','clock','macro'])assert.equal(JSON.stringify(p[key]),JSON.stringify(payload[key]),'Zone-only migration preserves '+key);
+   const oz=e.oldZone,ZW=m.cfg.W/m.cfg.ZONE,z=Math.floor(oz/2/m.cfg.ZONE)*ZW+Math.floor(oz*1.5/m.cfg.ZONE);
+   assert.equal(p.tasks.active[0].zone,z);assert.equal(p.tasks.active[0].coolKey,'cong:'+z);assert.equal(p.tasks.cool['cov:'+z],20);
+   assert.equal(Object.keys(p.tasks.cool).length,16,'Cooldown covers all 1km children of the old 4km zone');
+   const broken=JSON.parse(body);broken.city.pop.n--;broken.city.pop.b='';assert.throws(()=>m.migrate(broken,from));
+   console.log('PASS zoning-only migration',id,'v'+from+' -> v'+m.mapVersion,'unchanged city, network, economy and clock');continue;
+  }
   const actual=C.U.unpackTyped(p.city.pop),fill=C.U.unpackTyped(p.city.fillNew);let newCells=0;
   for(let y=0;y<m.cfg.H;y++)for(let x=0;x<m.cfg.W;x++){
    const k=y*m.cfg.W+x,inside=x>=dx&&x<dx+e.oldW&&y>=dy&&y<dy+e.oldH;

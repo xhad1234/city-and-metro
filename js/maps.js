@@ -37,7 +37,7 @@
     },
   };
   // 其他地图（教程与新增城市）由各自的数据文件登记为 CM.MAP_LIST；未写的配置项沿用广州样本
-  // 交通小区边长（v2.6）：交通计算量随小区数的平方增长。现有地图都是 4 格（约 1 km）；更大的地图没有指定时自动放大，
+  // 交通小区边长（v2.6）：交通计算量随小区数的平方增长。默认采用 4 格（约 1 km）；更大的地图没有指定时自动放大，
   // 让全图小区数保持在同一量级（约 2000 个以内），跳月速度与内存不随地图面积成倍增长。边长须能整除地图宽高
   const autoZone = function (W, H) {
     for (const z of [4, 6, 8, 10, 12, 16, 20, 24]) if (W % z === 0 && H % z === 0 && W * H / (z * z) <= 2200) return z;
@@ -102,12 +102,53 @@
     return function (p, from) {
       const steps = list.filter(function (s) { return s.from >= from; });
       if (!steps.length || steps[0].from !== from) throw new Error('不支持从第 ' + from + ' 版迁移');
+      const zoning = captureZoning(p);
       for (const spec of steps) migrateStep(p, spec, from);
+      const map = MAPS[p.meta.map || 'gz'];
+      restoreZoning(zoning, steps[0].oldW, steps[0].oldZone || GZ_CFG.ZONE, map.cfg.W, map.cfg.ZONE, steps.reduce((n, s) => n + s.dx, 0), steps.reduce((n, s) => n + s.dy, 0));
       return p;
     };
   };
+  // 连续扩图后只重映射一次分区，避免先合并、再细分时丢失原任务的位置精度。
+  function captureZoning(p) {
+    const records = [], cooldowns = [];
+    const visit = o => {
+      if (!o || typeof o !== 'object') return;
+      if (typeof o.zone === 'number' || typeof o.coolKey === 'string') records.push({ o: o, zone: o.zone, key: o.coolKey,
+        points: [o.area].concat(o.anchors || []).filter(a => a && Number.isFinite(a.x) && Number.isFinite(a.y)).map(a => ({ x: a.x, y: a.y })) });
+      for (const key of Object.keys(o)) { if (key === 'cool' && o[key] && typeof o[key] === 'object') cooldowns.push({ o: o, entries: Object.entries(o[key]) }); else visit(o[key]); }
+    };
+    visit(p.tasks); visit(p.corp); return { records: records, cooldowns: cooldowns };
+  }
+  function restoreZoning(saved, oldW, oldZone, W, zone, dx, dy) {
+    const oldZW = oldW / oldZone, ZW = W / zone;
+    const at = (x, y) => Math.floor((y + dy) / zone) * ZW + Math.floor((x + dx) / zone);
+    const center = z => [(z % oldZW + 0.5) * oldZone, (Math.floor(z / oldZW) + 0.5) * oldZone];
+    const mapped = (z, points = []) => { const a = points.find(a => Math.floor(a.y / oldZone) * oldZW + Math.floor(a.x / oldZone) === z); return a ? at(a.x, a.y) : at(...center(z)); };
+    for (const r of saved.records) {
+      if (typeof r.zone === 'number') r.o.zone = mapped(r.zone, r.points);
+      if (typeof r.key === 'string') r.o.coolKey = r.key.replace(/^(cong|cov|z):(\d+)$/, (_, kind, z) => kind + ':' + mapped(+z, +z === r.zone ? r.points : []));
+    }
+    for (const r of saved.cooldowns) {
+      const out = {}, put = (key, v) => { out[key] = out[key] === undefined ? v : Math.max(out[key], v); };
+      for (const [key, value] of r.entries) {
+        const match = /^(cong|cov|z):(\d+)$/.exec(key); if (!match) { put(key, value); continue; }
+        const z = +match[2], x = (z % oldZW) * oldZone + dx, y = Math.floor(z / oldZW) * oldZone + dy;
+        // 原分区冷却覆盖其所有新子分区，已完成目标不会因细分而立即重复发布。
+        for (let j = Math.floor(y / zone); j < Math.ceil((y + oldZone) / zone); j++) for (let i = Math.floor(x / zone); i < Math.ceil((x + oldZone) / zone); i++) put(match[1] + ':' + (j * ZW + i), value);
+      }
+      r.o.cool = out;
+    }
+  }
   function migrateStep(p, spec, from0) {
-    const oldZone = spec.oldZone || GZ_CFG.ZONE, newZone = spec.newZone || GZ_CFG.ZONE, from = spec.from;
+    const from = spec.from;
+    if (spec.zoneOnly) {
+      const W = spec.newW, H = spec.newH, C = p.city;
+      for (const k of ['pop', 'jobs', 'bh', 'taken', 'lu', 'street', 'urbanYear']) if (U.unpackTyped(C[k]).length !== W * H) throw new Error('城市数据尺寸与旧交通分区不符');
+      const previous = p.mapUpgrade && from > from0 ? p.mapUpgrade.note : '';
+      p.mapUpgrade = { from: from0, to: MAPS[p.meta.map].mapVersion, at: [p.clock.y, p.clock.m, p.clock.d], zoneOnly: from === from0, note: (previous ? previous + '；' : '') + spec.note };
+      return;
+    }
     {
       const m = MAPS[p.meta.map || 'gz'], W = spec.newW || m.cfg.W, H = spec.newH || m.cfg.H, oW = spec.oldW, oH = spec.oldH, dx = spec.dx, dy = spec.dy;
       if (dx < 0 || dy < 0 || dx + oW > W || dy + oH > H) throw new Error('新旧格网尺寸不匹配');
@@ -135,23 +176,14 @@
         for (const id in net.stations) sh(net.stations[id]);
         for (const id in net.segments) { const s = net.segments[id]; if (s.pts) s.pts = s.pts.map(function (q) { return [q[0] + dx, q[1] + dy]; }); }
       }
-      // 片区编号
-      const oZW = oW / oldZone, nZW = W / newZone;
-      const zmap = function (z) {
-        const x = (z % oZW + 0.5) * oldZone + dx, y = (Math.floor(z / oZW) + 0.5) * oldZone + dy;
-        return Math.floor(y / newZone) * nZW + Math.floor(x / newZone);
+      // 动态任务、复合任务与合作招标的地点平移；分区在整条迁移链结束后统一换算。
+      const moved = new Set(), move = function (a) { if (a && !moved.has(a)) { sh(a); moved.add(a); } };
+      const fixTask = function (o) {
+        if (!o || typeof o !== 'object') return;
+        if (o.area) move(o.area); if (o.anchors) o.anchors.forEach(move);
+        for (const key of Object.keys(o)) if (key !== 'area' && key !== 'anchors' && key !== 'cool') fixTask(o[key]);
       };
-      const fixTask = function (t) { if (!t) return; if (t.anchors) t.anchors.forEach(sh); if (typeof t.zone === 'number') t.zone = zmap(t.zone); if (typeof t.coolKey === 'string') t.coolKey = t.coolKey.replace(/^(cong|cov):(\d+)$/, function (s0, a, z) { return a + ':' + zmap(+z); }); };
-      const T = p.tasks;
-      for (const list of [T.active, T.done, T.failed]) (list || []).forEach(fixTask);
-      if (T.cool) {
-        const nc = {};
-        for (const k in T.cool) {
-          const key = k.replace(/^(cong|cov):(\d+)$/, function (s0, a, z) { return a + ':' + zmap(+z); });
-          nc[key] = nc[key] === undefined ? T.cool[k] : Math.max(nc[key], T.cool[k]);
-        }
-        T.cool = nc;
-      }
+      fixTask(p.tasks); fixTask(p.corp);
       // 城市经济：载入后按新增范围调整统计口径（连续迁移时原范围随后续步骤平移）
       if (p.macro) { const ar = p.macro.areaRebase; if (ar && ar.oldBox && from > from0) { ar.oldBox[0] += dx; ar.oldBox[1] += dy; } else p.macro.areaRebase = { from: from, oldBox: [dx, dy, oW, oH] }; }
       const prevNote = p.mapUpgrade && from > from0 ? p.mapUpgrade.note : '';

@@ -3949,7 +3949,7 @@
     }
     const n = names.length, sx = new Float64Array(n), sy = new Float64Array(n), sw = new Float64Array(n);
     for (let c = 0; c < N; c++) { const d = area[c]; if (d < 0) continue; const w = city.pop[c] + city.jobs[c] + 1; sx[d] += (c % W + 0.5) * w; sy[d] += (((c / W) | 0) + 0.5) * w; sw[d] += w; }
-    const B = model.B, BW = model.BW, blk = new Int16Array(B).fill(-1), Z = CFG.ZONE * 2;
+    const B = model.B, BW = model.BW, blk = new Int16Array(B).fill(-1), Z = model.flowBlockCells;
     for (let b = 0; b < B; b++) {
       const bi = b % BW, bj = (b / BW) | 0, cnt = new Map();
       for (let j = bj * Z; j < Math.min(H, bj * Z + Z); j++) for (let i = bi * Z; i < Math.min(W, bi * Z + Z); i++) { const c = j * W + i, d = area[c]; if (d >= 0) cnt.set(d, (cnt.get(d) || 0) + city.pop[c] + city.jobs[c] + 1); }

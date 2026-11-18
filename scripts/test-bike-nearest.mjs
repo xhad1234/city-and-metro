@@ -60,5 +60,5 @@ const interchange = { w: 6, walkW: 18, byLine: { red: 6 } }, lines = ['red', 'bl
 assert.equal(C.Model.accessTime(interchange, 0, lines), 6);
 assert.equal(C.Model.accessTime(interchange, 1, lines), 18);
 assert.equal(C.Model.accessTime({ w: 4 }, 1, lines), 4, 'Walk-only facilities retain their access time');
-assert.equal(C.CFG.bike.transferMin, 5); assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 7);
+assert.equal(C.CFG.bike.transferMin, 5); assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 8);
 console.log('PASS line-specific interchange access, walk-only facilities and unchanged bicycle speed/penalty');

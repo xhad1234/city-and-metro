@@ -879,7 +879,9 @@
   function Model(city, opts) {
     this.city = city;
     this.ZW = CFG.W / CFG.ZONE; this.ZH = CFG.H / CFG.ZONE; this.Z = this.ZW * this.ZH;
-    this.BW = Math.ceil(this.ZW / 2); this.BH = Math.ceil(this.ZH / 2); this.B = this.BW * this.BH;
+    this.flowBlockCells = Math.max(CFG.ZONE * 2, CM.DATA.flowBlockCells || 0);
+    this.flowZoneScale = this.flowBlockCells / CFG.ZONE;
+    this.BW = Math.ceil(CFG.W / this.flowBlockCells); this.BH = Math.ceil(CFG.H / this.flowBlockCells); this.B = this.BW * this.BH;
     const norm = function (prof) { const s = prof.reduce(function (a, b) { return a + b; }, 0); return prof.map(function (v) { return v / s; }); };
     this.profiles = { wd: norm(CFG.hourProfile.slice()), we: norm((CFG.hourProfileWe || CFG.hourProfile).slice()) };
     this.hourPeriod = new Int8Array(24);
@@ -1971,8 +1973,8 @@
     const kmPerCell = CFG.CELL_M / 1000;
     P.desTot.fill(0); P.desMetro.fill(0); P.zTrips.fill(0); P.zMetro.fill(0); P.zAccess.fill(0); P.zCW.fill(0); P.zCT.fill(0);
     P.zDest.fill(0); P.zDestM.fill(0); P.fIn.fill(0); P.fInM.fill(0); P.fOut.fill(0); P.fOutM.fill(0); P.fP.fill(0); P.fPM.fill(0);
-    const BW = this.BW, ZW = this.ZW;
-    if (!this.zoneBlock) this.zoneBlock = Int32Array.from({ length: Z }, function (_, z) { return (((z / ZW) | 0) >> 1) * BW + ((z % ZW) >> 1); });
+    const BW = this.BW, ZW = this.ZW, flowScale = this.flowZoneScale;
+    if (!this.zoneBlock) this.zoneBlock = Int32Array.from({ length: Z }, function (_, z) { return Math.floor(Math.floor(z / ZW) / flowScale) * BW + Math.floor((z % ZW) / flowScale); });
     const blocks = this.zoneBlock;
     // The same directed OD can appear in several purpose flows. Cache only the winning
     // access-pair indices within this iteration, never rounded costs or stale results.

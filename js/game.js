@@ -984,7 +984,7 @@
       if (CM.Milestones) CM.Milestones.backfill(g);
       if (CM.Eras) {
         CM.Eras.attach(g);
-        if (s.mapUpgrade && !s.mapUpgrade.displayOnly) CM.Eras.rebaseMap(g);
+        if (s.mapUpgrade && !s.mapUpgrade.displayOnly && !s.mapUpgrade.zoneOnly) CM.Eras.rebaseMap(g);
         CM.Eras.ensureBases(g, true);
       }
       // 城市经济：有数据则恢复；1.7 及更早的存档（或数据不完整）从当前状态接入，不补造过去的记录，不改变已有资金与债务。
@@ -1014,7 +1014,10 @@
         }
         g.backupFailed = s.__backupFailed || null;
         g.mapUpgradeInfo = mu;
-        if (mu.displayOnly) {
+        if (mu.zoneOnly) {
+          g.logEvent({ tag: '版本', title: '交通小区精度更新', desc: mu.note + '；原有城市地块、站线、日期、资金与已结算历史保留，客流按新分区重新计算。' });
+          g.upgradeNote = s.__backupFailed ? '交通小区已更新；升级前备份未能建立，不会自动保存，原存档保持不变' : '交通小区已恢复为 1×1 公里，原有线网与经营进度保留；升级前的存档已单独备份';
+        } else if (mu.displayOnly) {
           g.logEvent({ tag: '版本', title: '地图展示更新', desc: mu.note });
           g.upgradeNote = s.__backupFailed ? '地图展示已更新；升级前备份未能建立，不会自动保存，原存档保持不变' : '地图展示已更新，原有线网与经营进度保留；升级前的存档已单独备份';
         } else {
@@ -1032,7 +1035,7 @@
         g.logEvent({ tag: '版本', title: '交通模型升级（v' + CFG.GAME_VERSION + '）', desc: '存档来自 v' + g.traffic.from + '。已按新的枢纽接驳和换乘规则重算客流。原有线网、资金、债务和已结算历史保留，升级当月保护满意度与任务。' });
         g.backupFailed = s.__backupFailed || null;
         g.upgradeNote = (s.__backupFailed ? '存档已在内存中升级到 v' + CFG.GAME_VERSION + ' 交通模型；升级前备份未能建立（' + s.__backupFailed + '），不会自动保存，原存档保持不变' :
-          '存档已升级到 v' + CFG.GAME_VERSION + ' 交通模型（升级前的原存档已另存为「升级前备份」，可在存档列表中载入或导出）') + (s.__mapMigratedFrom ? '；地图范围同时扩展' : '');
+          '存档已升级到 v' + CFG.GAME_VERSION + ' 交通模型（升级前的原存档已另存为「升级前备份」，可在存档列表中载入或导出）') + (s.mapUpgrade && s.mapUpgrade.zoneOnly ? '；交通小区恢复为 1×1 公里' : s.__mapMigratedFrom ? '；地图范围同时扩展' : '');
       } else g.traffic = Object.assign({ v: CFG.TRAFFIC_MODEL }, s.traffic);
       if (s.mapUpgrade && !s.mapUpgrade.displayOnly) g.traffic.until = Math.max(g.traffic.until || 0, g.ym() + 1);
       if (D.population && g.city.populationRevision > (s.city.populationRevision || 0)) {
