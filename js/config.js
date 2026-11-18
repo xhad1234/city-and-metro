@@ -85,7 +85,7 @@
     },
     bike: {
       speedRatio: 3,         // 相对步行速度，共用可通行的地面街道
-      transferMin: 4,        // 每段骑行接驳计入取车/停车与进出站时间
+      transferMin: 5,        // 每段骑行接驳计入取车/停车与进出站时间
       maxRideMin: 15,
     },
 
