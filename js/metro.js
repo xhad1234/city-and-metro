@@ -862,7 +862,7 @@
     const facilities = Fac ? Fac.list(city) : [];
     const inactiveNames = new Set(facilities.filter(f => !Fac.active(f, yr, city)).map(f => f.name));
     for (const f of facilities) {
-      const sciencePark = f.t === 'cbd' && /科学园|科技园|产业园|开发区/.test(f.name);
+      const sciencePark = (f.t === 'cbd' || f.t === 'industry') && /科学园|科技园|产业园|开发区|工业区|工业园|汽车城/.test(f.name);
       if (f.gen || commercial.test(f.name) || (!permanent.has(f.t) && !sciencePark) || (f.ext && f.id !== portal)) continue;
       if (f.id === portal) landmarks.push(point(Fac.shortName(f), x, y));
       else if (!inactiveNames.has(f.name)) landmarks.push(point(f.name, f.x, f.y));

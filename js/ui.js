@@ -1651,13 +1651,14 @@
         else { opts('station', [['all', '合计'], ['in', '进站'], ['out', '出站'], ['xfer', '换乘']]); li('rgba(31,143,191,0.8)', '高峰负荷正常（< 60%）'); li('rgba(240,160,32,0.85)', '负荷较高（60%–100%）'); li('rgba(217,58,58,0.85)', '超过车站能力'); note = '全日：圆越大客流越大，颜色为高峰小时负荷；线路下方的色带为区间断面客流。'; }
         note = (self.g() && self.g().model.stDaily && self.g().compiled.routes.length ? '' : '还没有运营线路或客流仍在计算。') + note + ' 统计口径：' + { avg: '周平均（5 个工作日 + 2 个周末日）', wd: '工作日', we: '周末' }[R.layerOpt.stDt] + '。'; break;
       case 'fac': {
-        opts('facP', [['all', '设施类'], ['sc', '上学'], ['sh', '购物'], ['md', '医疗'], ['lz', '休闲'], ['hb', '枢纽'], ['hw', '通勤']]);
+        opts('facP', [['all', CM.DATA.industryFacilities ? '全部' : '设施类'], ['sc', '上学'], ['sh', '购物'], ['md', '医疗'], ['lz', '休闲'], ['hb', '枢纽'], ['hw', '通勤']]);
         opts('facDt', [['wd', '工作日'], ['we', '周末']]);
         const TR = CFG.trips;
-        if (R.layerOpt.facP === 'all') { for (const k of ['sc', 'sh', 'md', 'lz']) li(AX.category(TR.keys.indexOf(k), TR.color[k]), TR.name[k] + '为主的片区'); }
+        if (R.layerOpt.facP === 'all') { for (const k of (CM.DATA.industryFacilities ? TR.keys : ['sc', 'sh', 'md', 'lz'])) li(AX.category(TR.keys.indexOf(k), TR.color[k]), TR.name[k] + '为主的片区'); }
         else li(AX.category(TR.keys.indexOf(R.layerOpt.facP), TR.color[R.layerOpt.facP]), TR.name[R.layerOpt.facP] + '吸引（片区汇总）');
         li('#7a8699', AX.enabled() ? '圆点大小为日到访量；外环由紫到蓝表示地铁比例提高，可点击查看数值' : '圆点：重要设施（大小为日到访量，外环越绿乘地铁比例越高）', 'ring');
         note = (CM.DATA.bg ? "片区颜色为普通设施（中小学、社区商业、诊所、街区公园等）按片区汇总的吸引出行；重要设施单独计算，点击圆点查看详情。设施位置与年份为史实参考，规模为估算，到访量为模拟结果（道路、背景交通及地铁出行）。" : '片区颜色为普通设施（中小学、社区商业、诊所、街区公园等）按片区汇总的吸引出行；重要设施单独计算，点击圆点查看详情。设施位置与年份为史实参考，规模为估算，到访量为模拟结果（汽车 + 地铁出行，不含步行）。');
+        if (CM.DATA.industryFacilities) note += '全部包含通勤。产业园区圆点汇总范围内现有岗位的通勤，点击可查看岗位数、到访量与地铁比例；不额外增加岗位或出行。';
         break;
       }
       case 'dev': {

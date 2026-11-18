@@ -265,7 +265,7 @@
   const SKIM_BLOCKS = 16;
   const OD_OUT = ['carDem', 'hasCar', 'S', 'pT', 'pM', 'zTrips', 'zMetro', 'zAccess', 'zCW', 'zCT', 'desTot', 'desMetro',
     'zDest', 'zDestM', 'fIn', 'fInM', 'fOut', 'fOutM', 'fP', 'fPM', 'DS', 'choices'];
-  const OD_FIXED = ['Z', 'NZ', 'B', 'odStart', 'odDest', 't0', 't1', 't2', 't3', 't4', 't5', 'hostZ', 'nx', 'ny', 'kmPerCell', 'blocks', 'pkO', 'pkR', 'ckR'];
+  const OD_FIXED = ['Z', 'NZ', 'B', 'odStart', 'odDest', 't0', 't1', 't2', 't3', 't4', 't5', 'hostZ', 'nx', 'ny', 'kmPerCell', 'blocks', 'pkO', 'pkR', 'ckR', 'zoneIndustry'];
   const OD_MOVE = { gtS: 1, tmS: 1, kmS: 1 };
   const OD_INPUT = ['N', 'co', 'cr', 'facW', 'facWe', 'odOk', 'skT', 'skK', 'zJ', 'cpk', 'park', 'vot', 'carAccess',
     'walkW', 'occ', 'theta', 'fareFlat', 'fareKm0', 'fareStep', 'fareInc', 'fareCap', 'fareTab', 'bgShare', 'bgSpeed', 'bgWait', 'bgFare', 'roadKeep', 'accOk', 'gtS', 'tmS', 'kmS', 'perMin', 'capSh', 'capLz', 'habit', 'habAsc', 'habLite', 'hubAsc', 'hubFeed', 'hubEligible'];
@@ -655,6 +655,13 @@
         const key = blocks[ho] * B + blocks[hd];
         desTot[key] += F; desMetro[key] += metro;
         // 吸引统计：去程按目的地计（小区按目的，重要设施单独计）；设施的返程（离开设施）单独计
+        // 具名产业园区汇总所属岗位的真实通勤；不额外添加 OD、就业或车辆，不把工作地移到园区中心。
+        const industries = K.zoneIndustry && K.zoneIndustry[isOut ? d : o];
+        if (industries && comp[HW] > 0) for (const e of industries) {
+          const v = comp[HW] * e.share, m = v * q, f = e.f;
+          if (isOut) { fIn[f] += v; fInM[f] += m; fP[f * NPK + HW] += v; fPM[f * NPK + HW] += m; }
+          else { fOut[f] += v; fOutM[f] += m; }
+        }
         if (isOut) {
           if (d < Z) {
             for (let p = 0; p < NPK; p++) { const c = comp[p]; if (c) { zDest[p * Z + d] += c; zDestM[p * Z + d] += c * (p === 5 ? qH : q) + (p === 5 ? fM : 0); } }
@@ -994,6 +1001,7 @@
       hostZ[Z + k] = c0 >= 0 ? city.zoneOf(c0) : 0; nx[Z + k] = f.x; ny[Z + k] = f.y;
       const cs = Fac.siteCells(f, city); cells.push(Int32Array.from(cs));
       for (const c of cs) { let a = cellFac.get(c); if (!a) { a = []; cellFac.set(c, a); } a.push(k); if (f.lmK >= 0) excl[c] = 1; }
+      if (f.t === 'industry') { we[k] = 1; return; }
       // 出入口（v2.2 修正）：场地格及其外围一圈的陆地格。公园、宫苑、填海地等场地内部没有可步行的街道时，
       // 车站只要能步行到达场地边缘即可服务整个设施（另计场内步行时间），不再因场内不可步行而永远无法接驳
       const seen = new Set();
@@ -1023,9 +1031,32 @@
       inner[k] = Math.min(600, Math.sqrt(cs.length) * CFG.CELL_M * 0.4);   // 场内步行（米），大型公园与会展场馆约数分钟
       we[k] = f.we || f.T.we || 1;   // 单个设施可覆盖周末倍数（如主题乐园，v2.2）
     });
+    // 边界重叠时归较具体的小园区；校园、医院等独立场地不当作工业岗位。
+    const industrial = list.map((f, k) => f.t === 'industry' ? k : -1).filter(k => k >= 0);
+    const industryJobs = new Float64Array(F), industryOwner = industrial.length ? new Int32Array(city.N).fill(-1) : null;
+    let zoneIndustry = null;
+    if (industryOwner) {
+      const reserved = new Uint8Array(city.N), LU = CM.LU;
+      for (let k = 0; k < F; k++) if (['uni', 'hosp', 'park', 'scenic', 'air'].includes(list[k].t)) for (const c of cells[k]) reserved[c] = 1;
+      for (const k of industrial) for (const c of cells[k]) {
+        if (reserved[c] || [LU.WATER, LU.HILL, LU.PARK, LU.AIRPORT].includes(city.lu[c])) continue;
+        const prev = industryOwner[c];
+        if (prev < 0 || cells[k].length < cells[prev].length || (cells[k].length === cells[prev].length && list[k].id < list[prev].id)) industryOwner[c] = k;
+      }
+      const owned = new Map(industrial.map(k => [k, []])), zoneJobs = new Float64Array(Z), shares = new Map();
+      for (let c = 0; c < city.N; c++) {
+        const z = city.zoneOf(c), jobs = city.jobs[c]; zoneJobs[z] += jobs;
+        const k = industryOwner[c]; if (k < 0) continue;
+        owned.get(k).push(c); industryJobs[k] += jobs;
+        if (jobs > 0) { let m = shares.get(z); if (!m) { m = new Map(); shares.set(z, m); } m.set(k, (m.get(k) || 0) + jobs); }
+      }
+      for (const k of industrial) cells[k] = Int32Array.from(owned.get(k));
+      zoneIndustry = new Array(Z);
+      shares.forEach((m, z) => { zoneIndustry[z] = Array.from(m, ([f, jobs]) => ({ f: f, share: jobs / zoneJobs[z] })); });
+    }
     const key = list.map(function (f) { return f.id; }).join(',');
     if (this.fn && this.fn.key !== key) this.facDaily = null;
-    this.fn = { F: F, NZ: NZ, list: list, ids: list.map(function (f) { return f.id; }), key: key, hostZ: hostZ, nx: nx, ny: ny, cells: cells, cellFac: cellFac, ringFac: ringFac, inner: inner, reach: reach, excl: excl, we: we };
+    this.fn = { F: F, NZ: NZ, list: list, ids: list.map(function (f) { return f.id; }), key: key, hostZ: hostZ, nx: nx, ny: ny, cells: cells, cellFac: cellFac, ringFac: ringFac, inner: inner, reach: reach, excl: excl, we: we, industryOwner: industryOwner, industryJobs: industryJobs, zoneIndustry: zoneIndustry };
     return this.fn;
   };
   Model.prototype.facIndex = function (id) { return this.fn ? this.fn.ids.indexOf(id) : -1; };
@@ -1377,7 +1408,11 @@
             if (cd < cellWalk[c]) { cellWalk[c] = cd; cellStation[c] = k; }
             // 重要设施的场地格：按格计（设施本身可能没有居住人口）
             const fl = cellFac && cellFac.get(c);
-            if (fl) for (const f of fl) { let m = fMap.get(f); if (!m) { m = new Map(); fMap.set(f, m); } const e = m.get(k) || [0, 0]; e[0] += 1; e[1] += cd; m.set(k, e); }
+            if (fl) for (const f of fl) {
+              const industry = fn.list[f].t === 'industry'; if (industry && fn.industryOwner[c] !== f) continue;
+              const weight = industry ? city.jobs[c] : 1; if (!(weight > 0)) continue;
+              let m = fMap.get(f); if (!m) { m = new Map(); fMap.set(f, m); } const e = m.get(k) || [0, 0]; e[0] += weight; e[1] += cd * weight; m.set(k, e);
+            }
             const rl = ringFac && ringFac.get(c);
             if (rl) for (const f of rl) { let m = eMap.get(f); if (!m) { m = new Map(); eMap.set(f, m); } const d0 = m.get(k); if (d0 === undefined || cd < d0) m.set(k, cd); }
           }
@@ -1456,9 +1491,9 @@
       }
     }
     for (let k = 0; k < F; k++) {
-      const cs = fn.cells[k], n = Math.max(1, cs.length);
+      const cs = fn.cells[k], industry = fn.list[k].t === 'industry', n = Math.max(1, industry ? fn.industryJobs[k] : cs.length);
       let cov = 0, wsum = 0;
-      for (const c of cs) if (cellWalk[c] <= maxM) { cov++; wsum += cellWalk[c]; }
+      for (const c of cs) if (cellWalk[c] <= maxM) { const weight = industry ? city.jobs[c] : 1; cov += weight; wsum += cellWalk[c] * weight; }
       zCov[Z + k] = cov / n; zWalk[Z + k] = cov > 0 ? wsum / cov / mpm : 0;
       const m = fMap.get(k);
       if (m && cov > 0) {
@@ -1467,6 +1502,7 @@
         arr.sort(function (a, b) { return a.w - b.w; });
         zl[Z + k] = arr.slice(0, ACC_MAX);
       }
+      if (industry) continue; // 园区接通一角不代表整个园区可达，按岗位覆盖计算。
       // 按出入口（场地边缘）计：能步行到达边缘的车站服务全部到访者，步行时间 = 到边缘 + 场内步行
       let em = eMap.get(k);
       // 地图外设施的接驳点、接驳口附近的车站：与 Fac.extLink 同一口径，周围没有路也能接驳，路程按直线 × 1.35 计
@@ -1899,7 +1935,7 @@
     const S = new Float64Array(14), fp = Model.fareParams(this.fare), bg = CM.Eras ? CM.Eras.bg(this.year) : null;
     const K = { Z: Z, NZ: NZ, N: N, B: this.B, odStart: od.start, odDest: od.dest, t0: t[0], t1: t[1], t2: t[2], t3: t[3], t4: t[4], t5: t[5],
       co: co, cr: cr, cO: new Float64Array(NPK), cR: new Float64Array(NPK), facW: facW, facWe: facWe, odOk: od.F === F && od.key === fn.key,
-      hostZ: hostZ, nx: nx, ny: ny, skT: skT, skK: skK, kmPerCell: kmPerCell, pkO: lay.pkO, pkR: lay.pkR, ckR: lay.ckR,
+      hostZ: hostZ, nx: nx, ny: ny, skT: skT, skK: skK, kmPerCell: kmPerCell, pkO: lay.pkO, pkR: lay.pkR, ckR: lay.ckR, zoneIndustry: fn.zoneIndustry,
       cpk: prm.cpk, park: prm.park, vot: prm.vot, carAccess: prm.carAccess, walkW: prm.walkW, occ: prm.occ, theta: prm.theta, fareFlat: this.fareFor(0),
       fareKm0: fp.km0, fareStep: fp.step, fareInc: fp.inc, fareCap: fp.cap, fareTab: Model.fareTab(this.fare, this.year, prm.vot),
       bgShare: bg ? bg.share : 0, bgSpeed: bg ? bg.speed : 1, bgWait: bg ? bg.wait : 0, bgFare: bg ? bg.fare : 0, roadKeep: bg ? bg.keep : 0,

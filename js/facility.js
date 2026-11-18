@@ -14,6 +14,7 @@
     hosp: { name: '医院', icon: 'hospital', p: { md: 1 }, we: 1, L: 1.8, r: 0.5, group: '医疗' },
     shop: { name: '商圈', icon: 'bag', p: { sh: 0.8, lz: 0.2 }, we: 1.1, L: 1.5, r: 1.0, group: '商业' },
     cbd: { name: '商务区', icon: 'building', p: { sh: 1 }, we: 0.35, L: 1.6, r: 1.4, group: '商业' },
+    industry: { name: '产业园区', icon: 'building', p: { hw: 1 }, we: 1, L: 0, r: 1.4, group: '产业就业' },
     scenic: { name: '景点', icon: 'camera', p: { lz: 1 }, we: 1.25, L: 2.6, r: 0.8, group: '旅游休闲' },
     park: { name: '公园', icon: 'tree', p: { lz: 1 }, we: 1.15, L: 1.4, r: 1.0, group: '旅游休闲' },
     stadium: { name: '体育场馆', icon: 'stadium', p: { lz: 1 }, we: 1.3, L: 2.4, r: 0.6, group: '旅游休闲' },
@@ -124,7 +125,7 @@
       const f = { k: out.length, id: s.id || ('f' + i), name: s.n, label: s.label || s.n, t: s.t, T: T, x: 0, y: 0, r: s.r != null ? s.r : T.r, lmK: -1,
         open: null, close: yrOf(s.y1), w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
         ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null, planned: !!s.interfacePlan } : null, rw: s.rw || null, noModel: !!s.noModel,
-        regionGate: !!s.regionGate };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
+        regionGate: !!s.regionGate, polygons: s.polygons || null, gameYear: !!s.gameYear };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });
         if (k < 0) return;
@@ -235,7 +236,19 @@
   // 场地格：地标场地或以设施为中心、半径 r 的格（只取陆地）
   Fac.siteCells = function (f, city) {
     const out = [];
-    if (f.lmK >= 0) { for (const c of city.landmarkCells(D.landmarks[f.lmK])) if (city.landFrac[c] >= 0.3) out.push(c); }
+    if (f.polygons) {
+      const seen = new Set();
+      for (const p of f.polygons) {
+        const xs = p.map(v => v[0]), ys = p.map(v => v[1]);
+        for (let j = Math.max(0, Math.floor(Math.min(...ys))); j <= Math.min(city.H - 1, Math.floor(Math.max(...ys))); j++) for (let i = Math.max(0, Math.floor(Math.min(...xs))); i <= Math.min(city.W - 1, Math.floor(Math.max(...xs))); i++) {
+          const c = j * city.W + i; if (seen.has(c) || city.landFrac[c] < 0.3) continue;
+          const x = i + 0.5, y = j + 0.5; let inside = false;
+          for (let a = 0, b = p.length - 1; a < p.length; b = a++) if ((p[a][1] > y) !== (p[b][1] > y) && x < (p[b][0] - p[a][0]) * (y - p[a][1]) / (p[b][1] - p[a][1]) + p[a][0]) inside = !inside;
+          if (inside) { seen.add(c); out.push(c); }
+        }
+      }
+    }
+    else if (f.lmK >= 0) { for (const c of city.landmarkCells(D.landmarks[f.lmK])) if (city.landFrac[c] >= 0.3) out.push(c); }
     else {
       const R = Math.max(0.5, f.r);
       for (let j = Math.floor(f.y - R); j <= Math.floor(f.y + R); j++) for (let i = Math.floor(f.x - R); i <= Math.floor(f.x + R); i++) {
@@ -250,6 +263,7 @@
   };
   // 规模说明（参考规模，估算）
   Fac.sizeText = function (f, yr) {
+    if (f.t === 'industry') return '按园区内现有岗位与通勤统计，随城市发展更新';
     if (f.T.hub) return '约 ' + U.fmtNum(Fac.pax(f, yr) / 1e4, 1) + ' 万人次/日的市内接驳出行（工作日，估算）';
     const keys = Object.keys(f.p), nm = CM.CFG.trips.name;
     return '约占全市' + keys.map(function (k) { return nm[k]; }).join('、') + '出行吸引的 ' + U.fmtPct(Fac.share(f, yr), 1) + '（估算）';

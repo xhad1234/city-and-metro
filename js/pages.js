@@ -1062,7 +1062,8 @@
         return '已接通 ⇄ 经' + (lk.portal ? '接驳口车站' : '') + '「' + lk.st.name + '」' + (names ? '（' + names + '）' : '') + '在地图边缘连接地图外' + (lk.portal ? '，全部接驳出行可乘地铁' : '');
       })()] : null,
       ['参考规模（估算）', Fac.sizeText(f, yr)],
-      ['启用', f.open > -1e8 ? (f.lmK >= 0 ? D.landmarks[f.lmK].year + ' 年（地标落成）' : Math.floor(f.open) + ' 年') : '开局前已有'],
+      f.t === 'industry' && active ? ['园区岗位（游戏估算）', U.fmtPeople(model.fn.industryJobs[k]) + ' 岗位'] : null,
+      [f.gameYear ? '纳入游戏' : '启用', f.open > -1e8 ? (f.lmK >= 0 ? D.landmarks[f.lmK].year + ' 年（地标落成）' : Math.floor(f.open) + ' 年') : '开局前已有'],
       f.close != null ? ['停用', Math.floor(f.close) + ' 年 ' + Math.round((f.close % 1) * 12 + 1) + ' 月'] : null,
     ]));
     if (f.note) el.appendChild(h('div', { class: 'note', style: { margin: '4px 0 8px' } }, f.note));
@@ -1073,7 +1074,7 @@
       const hub = !!f.T.hub;
       // 到访量（模拟结果）：工作日 / 周末 / 周平均
       const grid = h('div', { class: 'stat-grid' });
-      const sW = this.stat(hub ? '工作日接驳出行' : '工作日到访', '—'), sE = this.stat(hub ? '周末接驳出行' : '周末到访', '—'), sA = this.stat('周平均', '—'), sM = this.stat('乘地铁比例（周平均）', '—');
+      const sW = this.stat(hub ? '工作日接驳出行' : f.t === 'industry' ? '工作日通勤到访' : '工作日到访', '—'), sE = this.stat(hub ? '周末接驳出行' : f.t === 'industry' ? '周末通勤到访' : '周末到访', '—'), sA = this.stat('周平均', '—'), sM = this.stat('乘地铁比例（周平均）', '—');
       grid.append(sW, sE, sA, sM);
       el.appendChild(grid);
       const vol = function (s) { return s ? (hub ? s.inn + s.out : s.inn) : 0; }, met = function (s) { return s ? (hub ? s.innM + s.outM : s.innM) : 0; };
@@ -1091,14 +1092,15 @@
       el.appendChild(this.sec('f-purp', '出行目的（' + (hub ? '去往车站 / 机场' : '到达') + '，人次/日）', '工作日 · 周末', function () {
         const a = model.facStats(id, 'wd'), b = model.facStats(id, 'we'), t = h('table', { class: 'tbl' }, h('tr', null, h('th', null, '目的'), h('th', null, '工作日'), h('th', null, '周末'), h('th', null, '乘地铁')));
         if (a && b) for (const q of TR.keys) { if (a.purp[q] < 1 && b.purp[q] < 1) continue; const sum = a.purp[q] + b.purp[q], metro = a.purpM[q] + b.purpM[q]; t.appendChild(h('tr', null, h('td', null, h('span', { class: 'dot', style: { background: AX.category(TR.keys.indexOf(q), TR.color[q]), marginRight: '6px' } }), TR.name[q]), h('td', null, U.fmtPeople(a.purp[q])), h('td', null, U.fmtPeople(b.purp[q])), h('td', null, U.fmtPct(sum > 0 ? metro / sum : 0, 0)))); }
-        return h('div', null, t, h('div', { class: 'note', style: { marginTop: '6px' } }, hub ? '旅客往返车站或机场的市内出行；修地铁不会增加旅客量。' : '只含汽车与地铁出行；通地铁后购物、休闲到访会适度增加。'));
+        return h('div', null, t, h('div', { class: 'note', style: { marginTop: '6px' } }, hub ? '旅客往返车站或机场的市内出行；修地铁不会增加旅客量。' : f.t === 'industry' ? '汇总园区现有岗位的通勤，工作地与接驳分散在园区各处；与片区通勤热力属同一批出行，不另加客流。' : '只含汽车与地铁出行；通地铁后购物、休闲到访会适度增加。'));
       }, true));
       // 附近地铁站与接驳
       el.appendChild(this.sec('f-acc', '附近地铁站与接驳', '', function () {
         const bx = h('div'), acc = model.net ? model.net.acc : null, node = model.Z + k;
         const list = acc && acc.NZ === model.fn.NZ ? acc.zl[node] : null;
-        if (acc && acc.NZ === model.fn.NZ) bx.appendChild(self.kv([['场地步行 15 分钟内可达车站', U.fmtPct(acc.zCov[node], 0) + ' 的场地'], ['平均步行时间', acc.zCov[node] > 0 ? U.fmtNum(acc.zWalk[node], 1) + ' 分钟' : '—']]));
+        if (acc && acc.NZ === model.fn.NZ) bx.appendChild(self.kv([[f.t === 'industry' ? '岗位步行 15 分钟内可达车站' : '场地步行 15 分钟内可达车站', U.fmtPct(acc.zCov[node], 0) + (f.t === 'industry' ? ' 的岗位' : ' 的场地')], ['平均步行时间', acc.zCov[node] > 0 ? U.fmtNum(acc.zWalk[node], 1) + ' 分钟' : '—']]));
         if (!list || !list.length) {
+          if (f.t === 'industry') { bx.appendChild(h('div', { class: 'callout info' }, '园区岗位附近暂无步行 15 分钟内的运营车站。可沿就业密集区域增设车站；部分工作地仍可能通过骑行接驳地铁。')); return bx; }
           // 有车站就在附近却走不到时说明原因（v2.6.1 玩家反馈）：步行距离按道路计算，水面、铁路和没有路的地方都要绕行
           const C = model.net ? model.net.C : null; let ns = null, nd = 1e9;
           if (C) C.stations.forEach(function (s, i) { if (!C.serviced[i]) return; const d = U.dist(s.x, s.y, f.x, f.y); if (d < nd) { nd = d; ns = s; } });
@@ -1115,6 +1117,7 @@
       }, true));
       // 如何提高乘地铁比例（v2.1 玩家反馈）：按当前状态诊断，给出可以马上做的改进与入口
       el.appendChild(this.sec('f-how', '如何提高乘地铁比例', '', function () {
+        if (f.t === 'industry') return h('div', { class: 'note' }, '沿园区就业密集区布置多座车站，连接主要居住片区，并保证早晚高峰班次。园区中心的一座站不会自动覆盖整个园区。');
         const acc = model.net ? model.net.acc : null, node = model.Z + k;
         const list = acc && acc.NZ === model.fn.NZ ? (acc.zl[node] || []) : [], C = model.net ? model.net.C : null;
         const best = list.length ? list.reduce(function (a, b) { return b.w < a.w ? b : a; }) : null, bs = best && C ? C.stations[best.s] : null;

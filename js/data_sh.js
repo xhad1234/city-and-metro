@@ -527,7 +527,15 @@
     lineColorsNice: ['#e3002b', '#8cc220', '#fcd600', '#461d84', '#944d9a', '#d40068', '#ed6f00', '#0094d8', '#87caed', '#c6afd4', '#871c2b', '#007a60', '#e999c0', '#626020', '#bca886', '#98d1c0', '#bc796f', '#c4984f'],
     places: (G.places || []).map(function (p) { return [p[0], p[1], p[2], p[3]]; }),
     stationNames: CM.SH_STATION_NAMES,
+    industryFacilities: true,
   };
+  // 产业园区仅汇总范围内已有岗位的通勤，不额外生成“购物型”园区客流。
+  for (const item of CM.SH_INDUSTRY) {
+    const existing = data.facilities.find(f => f.id === item.id);
+    if (existing) {
+      const open = existing.y0; Object.assign(existing, item); existing.y0 = open; existing.gameYear = false;
+    } else data.facilities.push(item);
+  }
   // 第一批是紧邻原图的主城区外围，第二批是其余新城、岛屿和滨海地区。
   const oldRegionIds = data.regions.map(r => r.id).concat('outer');
   const oldLandmarkIds = data.landmarks.slice(0, data.landmarks.findIndex(l => l.id === 'sh_songjiang_station')).map(l => l.id);

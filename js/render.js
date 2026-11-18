@@ -2712,7 +2712,7 @@
     const fd = dyn ? model.facData(lay === 'gap' ? LO.gapDt : lay === 'mshare' ? LO.shareDt : LO.facDt) : null;
     if (lay === 'fac' && fd) {
       const Z = model.Z;
-      const list = LO.facP === 'all' ? ['sc', 'sh', 'md', 'lz'] : [LO.facP];   // 全部 = 设施类出行（上学、购物、医疗、休闲）；通勤按岗位，单独查看
+      const list = LO.facP === 'all' ? (D.industryFacilities ? PK : ['sc', 'sh', 'md', 'lz']) : [LO.facP];
       facCell = new Float32Array(city.N); facDom = new Int8Array(city.N).fill(-1);
       const best = new Float32Array(city.N);
       for (const q of list) {
