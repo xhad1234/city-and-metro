@@ -265,10 +265,10 @@
   const SKIM_BLOCKS = 16;
   const OD_OUT = ['carDem', 'hasCar', 'S', 'pT', 'pM', 'zTrips', 'zMetro', 'zAccess', 'zCW', 'zCT', 'desTot', 'desMetro',
     'zDest', 'zDestM', 'fIn', 'fInM', 'fOut', 'fOutM', 'fP', 'fPM', 'DS', 'choices'];
-  const OD_FIXED = ['Z', 'NZ', 'B', 'odStart', 'odDest', 't0', 't1', 't2', 't3', 't4', 't5', 'hostZ', 'nx', 'ny', 'kmPerCell', 'blocks', 'pkO', 'pkR', 'ckR', 'zoneIndustry'];
-  const OD_MOVE = { gtS: 1, tmS: 1, kmS: 1 };
+  const OD_FIXED = ['Z', 'NZ', 'B', 'odStart', 'odDest', 't0', 't1', 't2', 't3', 't4', 't5', 'hostZ', 'nx', 'ny', 'kmPerCell', 'blocks', 'pkO', 'pkR', 'ckR', 'zoneIndustry', 'routeLines'];
+  const OD_MOVE = { gtS: 1, tmS: 1, kmS: 1, firstS: 1, lastS: 1 };
   const OD_INPUT = ['N', 'co', 'cr', 'facW', 'facWe', 'odOk', 'skT', 'skK', 'zJ', 'cpk', 'park', 'vot', 'carAccess',
-    'walkW', 'occ', 'theta', 'fareFlat', 'fareKm0', 'fareStep', 'fareInc', 'fareCap', 'fareTab', 'bgShare', 'bgSpeed', 'bgWait', 'bgFare', 'roadKeep', 'accOk', 'gtS', 'tmS', 'kmS', 'perMin', 'capSh', 'capLz', 'habit', 'habAsc', 'habLite', 'hubAsc', 'hubFeed', 'hubEligible'];
+      'walkW', 'occ', 'theta', 'fareFlat', 'fareKm0', 'fareStep', 'fareInc', 'fareCap', 'fareTab', 'bgShare', 'bgSpeed', 'bgWait', 'bgFare', 'roadKeep', 'accOk', 'gtS', 'tmS', 'kmS', 'firstS', 'lastS', 'perMin', 'capSh', 'capLz', 'habit', 'habAsc', 'habLite', 'hubAsc', 'hubFeed', 'hubEligible'];
   function odWorkerMain() {
     let basis = null, id = 0, work = {};
     onmessage = function (e) {
@@ -301,7 +301,7 @@
       let url;
       try {
         const src = '"use strict";\nconst INF=1e30,HW=0,SH=2,LZ=4,NPK=6;\nconst U={dist:' + U.dist.toString() + '};\n' +
-          odOrigin.toString() + '\n' + odWorkerMain.toString() + '\nodWorkerMain();\n';
+          accessTime.toString() + '\n' + odOrigin.toString() + '\n' + odWorkerMain.toString() + '\nodWorkerMain();\n';
         url = URL.createObjectURL(new Blob([src], { type: 'text/javascript' }));
         this.list = [];
         const count = workerPlan().mode;
@@ -333,8 +333,8 @@
     },
     submit: function (model, K, od, fn, alive) {
       let version = model._odWorkerVersion;
-      if (!version || version.od !== od || version.fn !== fn || version.acc !== K.acc) {
-        version = model._odWorkerVersion = { id: ++this.keySeq, od: od, fn: fn, acc: K.acc };
+      if (!version || version.od !== od || version.fn !== fn || version.acc !== K.acc || version.routeLines !== K.routeLines) {
+        version = model._odWorkerVersion = { id: ++this.keySeq, od: od, fn: fn, acc: K.acc, routeLines: K.routeLines };
       }
       const r = { id: ++this.seq, key: version.id, K: K, alive: alive, done: false, failed: false };
       this.queue.push(r); this.pump(); return r;
@@ -381,8 +381,8 @@
           if (!r.alive()) r.failed = true;
           else for (const key of OD_OUT) if (m.out[key]) r.K[key].set(m.out[key]);
           const sk = r.K.skimStore;
-          if (sk) { sk.gt = m.input.gtS; sk.tm = m.input.tmS; sk.km = m.input.kmS; }
-          delete m.input.gtS; delete m.input.tmS; delete m.input.kmS;
+          if (sk) { sk.gt = m.input.gtS; sk.tm = m.input.tmS; sk.km = m.input.kmS; sk.firstRoute = m.input.firstS; sk.lastRoute = m.input.lastS; }
+          delete m.input.gtS; delete m.input.tmS; delete m.input.kmS; delete m.input.firstS; delete m.input.lastS;
           s.buffers = m.input;
           const transfer = OD_OUT.filter(key => m.out[key]).map(key => m.out[key].buffer);
           s.w.postMessage({ type: 'recycle', data: m.out }, transfer);
@@ -413,9 +413,9 @@
       if (m.type !== 'skim') return;
       // 上一轮的路径表还回来继续用：每轮不再重新申请上百 MB 内存
       const old = m.reuse, fit = old && old.pred.length === n * nn, P16 = nn < 65535 && net.nE < 65535 ? Uint16Array : Int32Array;
-      const store = { gt: new Float32Array(n * N), tm: new Float32Array(n * N), km: new Float32Array(n * N), pred: fit ? old.pred : new P16(n * nn), order: fit ? old.order : new P16(n * nn), nOrd: fit ? old.nOrd : new Int32Array(n) };
+      const store = { gt: new Float32Array(n * N), tm: new Float32Array(n * N), km: new Float32Array(n * N), firstRoute: new Int32Array(n * N), lastRoute: new Int32Array(n * N), pred: fit ? old.pred : new P16(n * nn), order: fit ? old.order : new P16(n * nn), nOrd: fit ? old.nOrd : new Int32Array(n) };
       for (let s = m.s0; s < m.s1; s++) metroTree(net, m.cost, m.tAct, s, work, store, heap, m.tpen, m.s0);
-      postMessage({ req: m.req, part: m.part, s0: m.s0, s1: m.s1, store: store }, [store.gt.buffer, store.tm.buffer, store.km.buffer, store.pred.buffer, store.order.buffer, store.nOrd.buffer]);
+      postMessage({ req: m.req, part: m.part, s0: m.s0, s1: m.s1, store: store }, [store.gt.buffer, store.tm.buffer, store.km.buffer, store.firstRoute.buffer, store.lastRoute.buffer, store.pred.buffer, store.order.buffer, store.nOrd.buffer]);
     };
   }
   const SkimPool = {
@@ -490,7 +490,7 @@
         try {
           if (s.netId !== j.req.nid) {
             const n = j.req.net;
-            s.w.postMessage({ type: 'net', id: j.req.nid, net: { N: n.N, nNodes: n.nNodes, nE: n.nE, outStart: n.outStart, outEdge: n.outEdge, eTo: n.eTo, eKm: n.eKm, eFrom: n.eFrom, exits: n.exits } });
+            s.w.postMessage({ type: 'net', id: j.req.nid, net: { N: n.N, nNodes: n.nNodes, nE: n.nE, outStart: n.outStart, outEdge: n.outEdge, eTo: n.eTo, eKm: n.eKm, eFrom: n.eFrom, eType: n.eType, eRoute: n.eRoute, exits: n.exits } });
             s.netId = j.req.nid;
           }
           if (j.type === 'load') { s.w.postMessage({ type: 'load', id: j.req.nid, req: j.req.id, part: j.part, s0: j.s0, s1: j.s1, D: j.D, pred: j.pred, order: j.order, nOrd: j.nOrd }, [j.D.buffer, j.pred.buffer, j.order.buffer, j.nOrd.buffer]); j.D = j.pred = j.order = j.nOrd = null; }
@@ -515,6 +515,11 @@
   // 汽车广义成本、最优接驳车站对（同一迭代内缓存胜出的组合）、Logit 地铁选择、新增购物 / 休闲出行（有上限），
   // 并按顺序累加全网统计（S、分目的 pT / pM）、小区与设施的吸引统计、期望线与汽车需求。
   // 需要的数组一次性读入局部变量；运算与累加顺序固定，结果与逐次调用完全相同
+  function accessTime(entry, route, lines) {
+    if (!entry.byLine) return entry.w;
+    return entry.byLine[lines[route]] ?? entry.walkW;
+  }
+  Model.accessTime = accessTime;
   function odOrigin(K, i) {
     const Z = K.Z, NZ = K.NZ, N = K.N, B = K.B;
     const odStart = K.odStart, odDest = K.odDest, t0 = K.t0, t1 = K.t1, t2 = K.t2, t3 = K.t3, t4 = K.t4, t5 = K.t5;
@@ -572,7 +577,8 @@
             let winner = -1;
             if (cached >= 0) {
               const A = lo[cached >> 3], Bq = ld[cached & 7];
-              bs = A.s; bt = Bq.s; bw = A.w + Bq.w;
+              bs = A.s; bt = Bq.s; const at = bs * N + bt;
+              bw = accessTime(A, K.firstS[at], K.routeLines) + accessTime(Bq, K.lastS[at], K.routeLines);
               best = walkW * bw + gtS[bs * N + bt];
             } else if (cached === -2) for (let a = 0; a < lo.length; a++) {
               const A = lo[a], row = A.s * N;
@@ -581,8 +587,9 @@
                 if (A.s === Bq.s) continue;
                 const g = gtS[row + Bq.s];
                 if (g >= INF) continue;
-                const w = walkW * (A.w + Bq.w) + g;
-                if (w < best) { best = w; bs = A.s; bt = Bq.s; bw = A.w + Bq.w; winner = (a << 3) | b; }
+                const at = row + Bq.s, access = accessTime(A, K.firstS[at], K.routeLines) + accessTime(Bq, K.lastS[at], K.routeLines);
+                const w = walkW * access + g;
+                if (w < best) { best = w; bs = A.s; bt = Bq.s; bw = access; winner = (a << 3) | b; }
               }
             }
             if (cached === -2) choices[pair] = winner;
@@ -683,6 +690,8 @@
     const N = net.N, nn = net.nNodes, outStart = net.outStart, outEdge = net.outEdge, eTo = net.eTo, eKm = net.eKm;
     const gt = store.gt, tm = store.tm, km = store.km, pred = store.pred, order = store.order, nOrd = store.nOrd;
     const dist = work.dist, dtm = work.dtm, dkm = work.dkm, row = s - (r0 || 0);
+    if (!work.firstRoute || work.firstRoute.length !== nn) { work.firstRoute = new Int32Array(nn); work.lastRoute = new Int32Array(nn); }
+    const first = work.firstRoute, last = work.lastRoute; first.fill(-1); last.fill(-1);
     dist.fill(INF);
     heap.clear();
     dist[s] = 0; dtm[s] = 0; dkm[s] = 0;
@@ -696,13 +705,17 @@
       order[pb + no++] = u;
       for (let k = outStart[u]; k < outStart[u + 1]; k++) {
         const e = outEdge[k], v = eTo[e], nd = du + cost[e];
-        if (nd < dist[v]) { dist[v] = nd; dtm[v] = dtm[u] + tAct[e]; dkm[v] = dkm[u] + eKm[e]; pred[pb + v] = e; heap.push(nd, v); }
+        if (nd < dist[v]) {
+          dist[v] = nd; dtm[v] = dtm[u] + tAct[e]; dkm[v] = dkm[u] + eKm[e]; pred[pb + v] = e;
+          const ride = net.eType[e] === 2; first[v] = first[u] < 0 && ride ? net.eRoute[e] : first[u]; last[v] = ride ? net.eRoute[e] : last[u]; heap.push(nd, v);
+        }
       }
     }
     nOrd[row] = no;
     const ob = row * N;
     for (let t = 0; t < N; t++) {
       const exit = net.exits[t];
+      store.firstRoute[ob + t] = first[exit]; store.lastRoute[ob + t] = last[exit];
       // 至少包含一段实际乘车（乘车里程 > 0）；只靠站外步行连通的路径不算地铁行程
       if (dist[exit] >= INF || t === s || !(dkm[exit] > 0)) { gt[ob + t] = INF; tm[ob + t] = 0; km[ob + t] = 0; continue; }
       gt[ob + t] = dist[exit] - tpen; tm[ob + t] = dtm[exit]; km[ob + t] = dkm[exit];
@@ -1311,8 +1324,10 @@
     for (let j = Math.max(0, cj - radius); j <= Math.min(city.H - 1, cj + radius); j++) for (let i = Math.max(0, ci - radius); i <= Math.min(city.W - 1, ci + radius); i++) {
       const v = j * VW + i, d = Math.min(vm.get(v) ?? Infinity, vm.get(v + 1) ?? Infinity, vm.get(v + VW) ?? Infinity, vm.get(v + VW + 1) ?? Infinity) + CFG.walk.cellExtraM;
       if (d > walkMax && d > bikeMax) continue;
-      const walkMin = d <= walkMax ? d / mpm : Infinity, bikeMin = d <= bikeMax ? d / speed + bike.transferMin : Infinity;
-      const chosen = bikeMin < walkMin ? result.bike : result.walk, minutes = Math.min(walkMin, bikeMin), c = j * city.W + i;
+      const c = j * city.W + i, eligible = !net.C.serviced?.[k] || !net.acc.bikeCells || net.acc.bikeCells[k].has(c);
+      const walkMin = d <= walkMax ? d / mpm : Infinity, bikeMin = eligible && d <= bikeMax ? d / speed + bike.transferMin : Infinity;
+      if (!Number.isFinite(walkMin) && !Number.isFinite(bikeMin)) continue;
+      const chosen = bikeMin < walkMin ? result.bike : result.walk, minutes = Math.min(walkMin, bikeMin);
       for (let q = 0; q < chosen.limits.length; q++) if (minutes <= chosen.limits[q]) { chosen.pop[q] += city.pop[c]; chosen.jobs[q] += city.jobs[c]; }
     }
     return result;
@@ -1325,6 +1340,15 @@
     const bike = CFG.bike, bikeSpeed = mpm * bike.speedRatio, bikeM = bikeSpeed * bike.maxRideMin;
     const accessRadius = Math.ceil(Math.max(maxM, bikeM) / CFG.CELL_M) + 1;
     const nC = city.N, Z = this.Z, fn = this.fn, F = fn ? fn.F : 0, NZ = Z + F;
+    // 每个居住 / 工作地格、每条线路只保留路网距离最近的骑行站；步行候选独立保留。
+    const bikeCells = Array.from({ length: N }, () => new Set()), bikeLines = new Map();
+    const stationLines = C.stations.map((s, k) => C.stationLines ? Array.from(C.stationLines[k] || []) : C.routes ? Array.from(new Set(C.routes.filter(r => r.stIdx.includes(k)).map(r => r.lineId))) : ['station:' + k]);
+    for (let k = 0; k < N; k++) if (!C.serviced || C.serviced[k]) for (const line of stationLines[k]) {
+      let g = bikeLines.get(line); if (!g) { g = { x0: city.W, y0: city.H, x1: 0, y1: 0 }; bikeLines.set(line, g); }
+      const s = C.stations[k]; g.x0 = Math.min(g.x0, Math.max(0, Math.floor(s.x) - accessRadius)); g.y0 = Math.min(g.y0, Math.max(0, Math.floor(s.y) - accessRadius));
+      g.x1 = Math.max(g.x1, Math.min(city.W - 1, Math.floor(s.x) + accessRadius)); g.y1 = Math.max(g.y1, Math.min(city.H - 1, Math.floor(s.y) + accessRadius));
+    }
+    for (const g of bikeLines.values()) { g.w = g.x1 - g.x0 + 1; const n = g.w * (g.y1 - g.y0 + 1); g.dist = new Float64Array(n).fill(INF); g.station = new Int32Array(n).fill(-1); }
     const cellWalk = new Float32Array(nC).fill(Infinity), cellStation = new Int32Array(nC).fill(-1);
     const cellAccess = new Uint8Array(nC);
     const dist = this._wdist || (this._wdist = new Float64Array(city.V).fill(INF));
@@ -1419,15 +1443,17 @@
           const w = city.pop[c] + city.jobs[c];
           if (w <= 0) continue;
           if (cd <= 750) catchPop[k] += city.pop[c] + city.jobs[c];
+          if (cd <= bikeM) for (const line of stationLines[k]) {
+            const g = bikeLines.get(line), q = (j - g.y0) * g.w + i - g.x0;
+            if (cd < g.dist[q] || (cd === g.dist[q] && k < g.station[q])) { g.dist[q] = cd; g.station[q] = k; }
+          }
+          if (cd > maxM) continue;
           const z = city.zoneOf(c);
           let m = zMap.get(z); if (!m) { m = new Map(); zMap.set(z, m); }
-          const walkMin = cd <= maxM ? cd / mpm : Infinity;
-          const bikeMin = cd <= bikeM ? cd / bikeSpeed + bike.transferMin : Infinity;
-          const e = m.get(k) || [0, 0, 0, 0];
+          const walkMin = cd / mpm;
+          const e = m.get(k) || [0, 0, 0, 0, 0, new Map()];
           e[0] += w;
-          e[1] += w * Math.min(walkMin, bikeMin);
-          if (bikeMin < walkMin) e[2] += w;
-          if (cd <= maxM) e[3] += w;
+          e[1] += w * walkMin; e[3] += w; e[4] += w * walkMin;
           m.set(k, e);
           cellAccess[c] = 1;
         }
@@ -1450,9 +1476,30 @@
       for (const v of touched) D_[v] = INF;
     }
     yield;
+    let lineCount = 0;
+    for (const [line, g] of bikeLines) {
+      for (let q = 0; q < g.station.length; q++) {
+        const k = g.station[q]; if (k < 0) continue;
+        const d = g.dist[q], walkMin = d <= maxM ? d / mpm : Infinity, bikeMin = d / bikeSpeed + bike.transferMin;
+        if (!(bikeMin < walkMin)) continue;
+        const i = g.x0 + q % g.w, j = g.y0 + Math.floor(q / g.w), c = j * city.W + i, w = city.pop[c] + city.jobs[c], z = city.zoneOf(c);
+        let m = zMap.get(z); if (!m) { m = new Map(); zMap.set(z, m); }
+        let e = m.get(k); if (!e) { e = [0, 0, 0, 0, 0, new Map()]; m.set(k, e); }
+        let l = e[5].get(line); if (!l) { l = [e[3], e[4]]; e[5].set(line, l); }
+        if (d <= maxM) l[1] += w * (bikeMin - walkMin); else { l[0] += w; l[1] += w * bikeMin; }
+        if (!bikeCells[k].has(c)) {
+          bikeCells[k].add(c); e[2] += w;
+          if (d <= maxM) e[1] += w * (bikeMin - walkMin); else { e[0] += w; e[1] += w * bikeMin; }
+          cellAccess[c] = 1;
+        }
+      }
+      if ((++lineCount & 3) === 0) yield;
+    }
     // 小区接驳表（下标 0…Z−1 为小区，Z…Z+F−1 为重要设施）
     const zl = new Array(NZ).fill(null), zCov = new Float32Array(NZ), zWalk = new Float32Array(NZ), zTot = new Float64Array(Z);
     const zWalkCov = new Float32Array(Z);
+    const accessEntry = (e, s, tot) => ({ s: s, w: e[1] / e[0], share: e[0] / Math.max(1, tot), bikeShare: e[2] / e[0], walkable: e[3] > 0,
+      walkW: e[3] > 0 ? e[4] / e[3] : INF, byLine: Object.fromEntries(Array.from(e[5], ([line, l]) => [line, l[1] / l[0]])) });
     for (let z = 0; z < Z; z++) {
       let tot = 0, cov = 0, walkCov = 0, wsum = 0;
       for (const c of this.zoneCells[z]) {
@@ -1467,7 +1514,7 @@
       const m = zMap.get(z);
       if (m && zCov[z] > 0) {
         const arr = [];
-        m.forEach(function (e, s) { arr.push({ s: s, w: e[1] / e[0], share: e[0] / Math.max(1, tot), bikeShare: e[2] / e[0], walkable: e[3] > 0 }); });
+        m.forEach(function (e, s) { arr.push(accessEntry(e, s, tot)); });
         arr.sort(function (a, b) { return a.w - b.w; });
         zl[z] = arr.slice(0, ACC_MAX);
       }
@@ -1485,7 +1532,7 @@
         if (j < 0) continue;
         if (j < L.length) cnt[L[j].s]--;
         const e = b.entry;
-        L[j] = { s: s2, w: e[1] / e[0], share: e[0] / Math.max(1, zTot[b.z]), bikeShare: e[2] / e[0], walkable: e[3] > 0 };
+        L[j] = accessEntry(e, s2, zTot[b.z]);
         L.sort(function (x, y) { return x.w - y.w; });
         cnt[s2] = 1;
       }
@@ -1568,7 +1615,7 @@
       }
     }
     for (let c = 0; c < nC; c++) { pt += city.pop[c]; if (cellWalk[c] <= maxM) pc += city.pop[c]; }
-    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalkCov: zWalkCov, zWalk: zWalk, trees: trees, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: pt > 0 ? pc / pt : 0, zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
+    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalkCov: zWalkCov, zWalk: zWalk, trees: trees, bikeCells: bikeCells, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: pt > 0 ? pc / pt : 0, zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
   };
 
   Model.prototype.buildMetro = function (C, acc0) {
@@ -1629,6 +1676,7 @@
     for (const s of walkEnds) push(s, exits[s], 5, -1, -1, 0, s, 0, 0, 0);
     const nE = E.from.length;
     const net = {
+      routeLines: C.routes.map(r => r.lineId),
       C: C, N: N, R: R, nNodes: nNodes, nE: nE, platBase: platBase, exits: exits, acc: acc, rideEdge: rideEdge, boardEdge: boardEdge,
       eFrom: Int32Array.from(E.from), eTo: Int32Array.from(E.to), eType: Uint8Array.from(E.type), eRoute: Int32Array.from(E.route),
       eLeg: Int32Array.from(E.leg), eDir: Uint8Array.from(E.dir), eSt: Int32Array.from(E.st), eKm: Float32Array.from(E.km), eT0: Float32Array.from(E.t0), eWm: Float32Array.from(E.wm),
@@ -1811,7 +1859,8 @@
         for (const r of req.parts) {
           const a = r.store, s0 = r.s0;
           store.gt.set(a.gt, s0 * N); store.tm.set(a.tm, s0 * N); store.km.set(a.km, s0 * N);
-          a.gt = a.tm = a.km = null;   // 已拷入整表，不再占内存
+          store.firstRoute.set(a.firstRoute, s0 * N); store.lastRoute.set(a.lastRoute, s0 * N);
+          a.gt = a.tm = a.km = a.firstRoute = a.lastRoute = null;   // 已拷入整表，不再占内存
           if ((r.part & 3) === 3) yield;
         }
         store.parts = req.parts; store.pred = store.order = store.nOrd = null;
@@ -1877,10 +1926,10 @@
     const N = net.N, nn = net.nNodes;
     const st = buf.skim;
     if (st && st.N === N && st.nn === nn) {
-      if (st.gt.length !== N * N) { st.gt = new Float32Array(N * N); st.tm = new Float32Array(N * N); st.km = new Float32Array(N * N); st.valid = false; }   // 上次在方式选择线程手里被放弃
+      if (st.gt.length !== N * N) { st.gt = new Float32Array(N * N); st.tm = new Float32Array(N * N); st.km = new Float32Array(N * N); st.firstRoute = new Int32Array(N * N); st.lastRoute = new Int32Array(N * N); st.valid = false; }   // 上次在方式选择线程手里被放弃
       return st;
     }
-    buf.skim = { N: N, nn: nn, gt: new Float32Array(N * N), tm: new Float32Array(N * N), km: new Float32Array(N * N), pred: null, order: null, nOrd: null, parts: null, D: new Float32Array(N * N) };
+    buf.skim = { N: N, nn: nn, gt: new Float32Array(N * N), tm: new Float32Array(N * N), km: new Float32Array(N * N), firstRoute: new Int32Array(N * N), lastRoute: new Int32Array(N * N), pred: null, order: null, nOrd: null, parts: null, D: new Float32Array(N * N) };
     return buf.skim;
   };
 
@@ -1935,11 +1984,11 @@
     const S = new Float64Array(14), fp = Model.fareParams(this.fare), bg = CM.Eras ? CM.Eras.bg(this.year) : null;
     const K = { Z: Z, NZ: NZ, N: N, B: this.B, odStart: od.start, odDest: od.dest, t0: t[0], t1: t[1], t2: t[2], t3: t[3], t4: t[4], t5: t[5],
       co: co, cr: cr, cO: new Float64Array(NPK), cR: new Float64Array(NPK), facW: facW, facWe: facWe, odOk: od.F === F && od.key === fn.key,
-      hostZ: hostZ, nx: nx, ny: ny, skT: skT, skK: skK, kmPerCell: kmPerCell, pkO: lay.pkO, pkR: lay.pkR, ckR: lay.ckR, zoneIndustry: fn.zoneIndustry,
+      hostZ: hostZ, nx: nx, ny: ny, skT: skT, skK: skK, kmPerCell: kmPerCell, pkO: lay.pkO, pkR: lay.pkR, ckR: lay.ckR, zoneIndustry: fn.zoneIndustry, routeLines: net ? net.routeLines : [],
       cpk: prm.cpk, park: prm.park, vot: prm.vot, carAccess: prm.carAccess, walkW: prm.walkW, occ: prm.occ, theta: prm.theta, fareFlat: this.fareFor(0),
       fareKm0: fp.km0, fareStep: fp.step, fareInc: fp.inc, fareCap: fp.cap, fareTab: Model.fareTab(this.fare, this.year, prm.vot),
       bgShare: bg ? bg.share : 0, bgSpeed: bg ? bg.speed : 1, bgWait: bg ? bg.wait : 0, bgFare: bg ? bg.fare : 0, roadKeep: bg ? bg.keep : 0,
-      acc: acc, accOk: !!accOk, choices: choices, skimStore: store, gtS: store ? store.gt : null, tmS: store ? store.tm : null, kmS: store ? store.km : null, DS: store ? store.D : null,
+      acc: acc, accOk: !!accOk, choices: choices, skimStore: store, gtS: store ? store.gt : null, tmS: store ? store.tm : null, kmS: store ? store.km : null, firstS: store ? store.firstRoute : null, lastS: store ? store.lastRoute : null, DS: store ? store.D : null,
       perMin: IND.perMin, capSh: IND.cap.sh, capLz: IND.cap.lz,
       habit: this.habit && this.habit.length === Z ? this.habit : null, habAsc: CFG.habit ? CFG.habit.asc : 0, habLite: CFG.habit ? CFG.habit.carLite : 0, hubAsc: CFG.choice.hubAsc || 0, hubFeed: CFG.choice.hubFeed || null,
       hubEligible: Uint8Array.from(fn.list, f => f.T?.hub && !f.ext?.gate),
@@ -1953,9 +2002,9 @@
       odDone = !req.failed;
       // 行程时间表在线程手里时出了错：重新算一遍，再在主线程做方式选择
       if (!odDone && store && !(store.gt.length === N * N)) {
-        store.gt = new Float32Array(N * N); store.tm = new Float32Array(N * N); store.km = new Float32Array(N * N); store.valid = false; store.parts = null;
+        store.gt = new Float32Array(N * N); store.tm = new Float32Array(N * N); store.km = new Float32Array(N * N); store.firstRoute = new Int32Array(N * N); store.lastRoute = new Int32Array(N * N); store.valid = false; store.parts = null;
         yield* this.metroSkim(net, P, p, prm, store);
-        K.gtS = store.gt; K.tmS = store.tm; K.kmS = store.km;
+        K.gtS = store.gt; K.tmS = store.tm; K.kmS = store.km; K.firstS = store.firstRoute; K.lastS = store.lastRoute;
       }
     }
     if (!odDone) for (let i = 0; i < Z; i++) { odOrigin(K, i); if ((i & 7) === 7) yield; }

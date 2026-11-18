@@ -94,7 +94,7 @@ for (const [id, t, region] of [
   ['qingpu_wanda', 'shop', 'qingpu'], ['nanqiao_bailian', 'shop', 'fengxian'],
   ['lingang_gangcheng', 'shop', 'lingang'], ['songjiang_uni', 'uni', 'songjiang'],
   ['zhangjiang_uni', 'uni', 'jinqiao'], ['minhang_uni', 'uni', 'minhang_new'],
-  ['zizhu', 'cbd', 'minhang_new'], ['sheshan', 'scenic', 'songjiang'],
+  ['zizhu', 'industry', 'minhang_new'], ['sheshan', 'scenic', 'songjiang'],
   ['chongming_air', 'air', 'chongming'],
 ]) {
   const f = facility('sh_' + id);
