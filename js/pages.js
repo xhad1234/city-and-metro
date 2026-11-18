@@ -418,6 +418,7 @@
         return b;
       }, true));
       el.appendChild(this.sec('st-cover', '步行覆盖', '', function () { return self.coverBlock(s, k, false); }));
+      el.appendChild(this.sec('st-bike-cover', '骑行覆盖', '', function () { return self.coverBlock(s, k, false, 'bike'); }));
       // 附近的重要设施（步行 15 分钟内可达本站的设施，v1.9）
       const mdl = g.model, accF = mdl.net.acc, facNear = [];
       if (mdl.fn && accF.NZ === mdl.fn.NZ) mdl.fn.list.forEach(function (f, q) { const zl = accF.zl[mdl.Z + q]; const e = zl && zl.find(function (x) { return x.s === k; }); if (e) facNear.push({ f: f, w: e.w }); });
@@ -437,6 +438,7 @@
     } else if (official && k !== undefined) {
       el.appendChild(this.callout('warn', 'warn', '该车站尚未接入运营线路，不提供服务：不计入地铁覆盖，也不产生客流和票款。把它连接到线路并确认建设后生效。'));
       el.appendChild(this.sec('st-cover', '潜在步行覆盖（接入线路后）', '', function () { return self.coverBlock(s, k, true); }));
+      el.appendChild(this.sec('st-bike-cover', '潜在骑行覆盖（接入线路后）', '', function () { return self.coverBlock(s, k, true, 'bike'); }));
     } else if (official) {
       el.appendChild(h('div', { class: 'note' }, '客流数据计算中…'));
     } else {
@@ -505,22 +507,22 @@
     b.appendChild(h('div', { class: 'note', style: { marginTop: '6px' } }, '所有修改先进入建设草案，确认后生效。'));
     return b;
   };
-  // 步行覆盖（沿实际道路）；potential：未通车站接入线路后的潜在覆盖
-  UI.prototype.coverBlock = function (s, k, potential) {
-    const g = this.g(), acc = g.model.net.acc, tree = acc.trees[k];
-    if (!tree) return h('div', { class: 'callout warn' }, '车站周边暂无可步行到达的道路，暂无覆盖。');
-    const vm = new Map(); for (let q = 0; q < tree.verts.length; q++) vm.set(tree.verts[q], tree.dist[q]);
-    const city = g.city, VW = city.VW, ci = Math.floor(s.x), cj = Math.floor(s.y);
-    const sums = [0, 0, 0], jobs = [0, 0, 0];
-    for (let j = Math.max(0, cj - 6); j <= Math.min(city.H - 1, cj + 6); j++) for (let i = Math.max(0, ci - 6); i <= Math.min(city.W - 1, ci + 6); i++) {
-      const v0 = j * VW + i;
-      let m = Infinity; for (const v of [v0, v0 + 1, v0 + VW, v0 + VW + 1]) { const dd = vm.get(v); if (dd !== undefined && dd < m) m = dd; }
-      m += CFG.walk.cellExtraM;
-      const c = j * city.W + i;
-      for (let q = 0; q < 3; q++) if (m <= (q + 1) * 5 * CFG.walk.mPerMin) { sums[q] += city.pop[c]; jobs[q] += city.jobs[c]; }
-    }
-    return h('div', null, this.kv([['步行 5 分钟内', U.fmtPeople(sums[0]) + ' 人 · ' + U.fmtPeople(jobs[0]) + ' 岗位'], ['步行 10 分钟内', U.fmtPeople(sums[1]) + ' 人 · ' + U.fmtPeople(jobs[1]) + ' 岗位'], ['步行 15 分钟内', U.fmtPeople(sums[2]) + ' 人 · ' + U.fmtPeople(jobs[2]) + ' 岗位']]),
-      h('div', { class: 'note', style: { marginTop: '6px' } }, (potential ? '预览：通车前不计入覆盖。' : '') + '按实际道路步行计算，河流与地面铁路会阻隔。'));
+  // 互斥的步行 / 骑行覆盖；potential：未通车站接入线路后的潜在覆盖。
+  UI.prototype.coverBlock = function (s, k, potential, mode) {
+    const g = this.g(), self = this, biking = mode === 'bike', body = h('div');
+    let lastAcc, lastCityVersion = -1;
+    const update = function () {
+      const acc = g.model.net.acc;
+      if (acc === lastAcc && g.city.version === lastCityVersion) return;
+      lastAcc = acc; lastCityVersion = g.city.version;
+      const index = g.model.net.C.sIndex.get(s.id), coverage = index === undefined ? null : g.model.stationCoverage(index);
+      if (!coverage) { body.replaceChildren(h('div', { class: 'callout warn' }, '车站周边暂无可通行的接驳道路，暂无覆盖。')); return; }
+      const data = biking ? coverage.bike : coverage.walk;
+      body.replaceChildren(self.kv(data.limits.map(function (t, q) { return [(biking ? '骑行接驳 ' : '步行 ') + U.fmtNum(t, 0) + ' 分钟内', U.fmtPeople(data.pop[q]) + ' 人 · ' + U.fmtPeople(data.jobs[q]) + ' 岗位']; })),
+        h('div', { class: 'note', style: { marginTop: '6px' } }, (potential ? '预览：通车前不计入覆盖。' : '') + '按道路接驳耗时较短的方式归类，步行与骑行人数互不重复；耗时相同归步行。' + (biking ? '骑行接驳时间含 ' + CFG.bike.transferMin + ' 分钟换乘。' : '') + '各时间档为累计覆盖的居民和岗位，并非实际客流。'));
+    };
+    update(); this.live.push(update);
+    return body;
   };
   // 线路早高峰各区段的满载率（v2.8 玩家反馈：任务里的数字查不到来源）：任务、地铁芯和线路详情共用 Tasks.crowdSections，从高到低列出，点一行定位到区段
   UI.prototype.crowdTable = function (lid, max) {

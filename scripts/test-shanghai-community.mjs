@@ -244,6 +244,37 @@ assert.equal(access.transfers.length, 0);
 assert.equal(model.computeAccess(compiled).zl[8][0].w, access.zl[8][0].w, 'Cached access tree must give the same result');
 console.log('PASS bicycle access time, service eligibility, ride limit and walk-only reporting');
 
+// Coverage counts residents and jobs, with every cell assigned to exactly one access mode.
+model.net = { C: compiled, acc: access };
+block.jobs = Float32Array.from({ length: width }, (_, c) => c + 10);
+const coverage = model.stationCoverage(0);
+assert.deepEqual(Array.from(coverage.walk.limits), [5, 10, 15]);
+assert.deepEqual(Array.from(coverage.bike.limits), [5, 10, 15], 'Both modes use the same total-access-time bands');
+assert.deepEqual(Array.from(coverage.walk.pop), [2, 3, 3]);
+assert.deepEqual(Array.from(coverage.bike.pop), [0, 2, 6], 'The five-minute bicycle band includes the handling penalty');
+assert.deepEqual(Array.from(coverage.walk.jobs), [21, 33, 33]);
+assert.deepEqual(Array.from(coverage.bike.jobs), [0, 27, 93]);
+assert.ok(model.stationCoverage(1).bike.pop[2] > 0, 'An unserved station can preview potential cycling coverage');
+const cachedCoverage = model.stationCoverage(0);
+model.net.acc = model.computeAccess(compiled);
+assert.deepEqual(model.stationCoverage(0), cachedCoverage, 'Cached and freshly requested trees agree');
+for (let c = 0; c < width; c++) {
+  block.pop.fill(0); block.jobs.fill(0); block.pop[c] = 7; block.jobs[c] = 11;
+  const r = model.stationCoverage(0), entry = access.zl[c]?.[0], reachable = !!entry && entry.w <= 15;
+  assert.equal(r.walk.pop[2] + r.bike.pop[2], reachable ? 7 : 0, 'A resident must not be counted in both modes');
+  assert.equal(r.walk.jobs[2] + r.bike.jobs[2], reachable ? 11 : 0, 'A job must not be counted in both modes');
+  if (reachable) assert.equal((entry.bikeShare ? r.bike : r.walk).pop[2], 7, 'Coverage mode agrees with actual access choice');
+}
+block.pop.fill(0); block.jobs.fill(0); block.pop[2] = 7;
+const oldExtra = CFG.walk.cellExtraM;
+try {
+  CFG.walk.cellExtraM = 62.5; // 562.5 m: walking and cycling both cost 7.5 min.
+  assert.equal(model.stationCoverage(0).walk.pop[2], 7);
+  assert.equal(model.stationCoverage(0).bike.pop[2], 0, 'Equal costs prefer walking');
+} finally { CFG.walk.cellExtraM = oldExtra; }
+assert.equal(model.stationCoverage(99), null, 'Missing road access must not fabricate coverage');
+console.log('PASS exclusive walking/cycling residents and jobs, cumulative bands, live population, cached trees and tie handling');
+
 const terminals = DATA.airportLayout.terminals;
 assert.equal(terminals.find(t => t.id === 'hq_t2').from, 2010 + 2 / 12);
 assert.equal(terminals.find(t => t.id === 'pvg_t3').from, 2028 + 11 / 12);

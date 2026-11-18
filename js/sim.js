@@ -1264,6 +1264,28 @@
   };
   // 小区按步行或骑车接驳，重要设施按步行接驳。步行覆盖和站外换乘仍按步行距离计算。
   const ACC_MAX = 6;   // 接驳组合缓存按每端 3 位编码（a << 3 | b），不能超过 8
+  // 车站详情的居民 / 岗位覆盖：与接驳选择共用路程和时间规则，每格只归入较快的一种方式。
+  // 步行树仍保持原有范围供行人和地图使用；详情单独读取已求出的完整骑行范围，不另跑路网搜索。
+  Model.prototype.stationCoverage = function (k) {
+    const city = this.city, net = this.net, tree = net && net.acc.trees[k], st = net && net.C.stations[k];
+    if (!tree || !st) return null;
+    const verts = tree.accessVerts, dist = tree.accessDist;
+    if (!verts || !dist) return null;
+    const vm = new Map(); for (let q = 0; q < verts.length; q++) vm.set(verts[q], dist[q]);
+    const mpm = CFG.walk.mPerMin, bike = CFG.bike, speed = mpm * bike.speedRatio;
+    const walkMax = CFG.walk.maxAccessM, bikeMax = speed * bike.maxRideMin;
+    const make = limits => ({ limits: limits, pop: [0, 0, 0], jobs: [0, 0, 0] });
+    const result = { walk: make([5, 10, 15]), bike: make([5, 10, 15]) };
+    const radius = Math.ceil(Math.max(walkMax, bikeMax) / CFG.CELL_M) + 1, ci = Math.floor(st.x), cj = Math.floor(st.y), VW = city.VW;
+    for (let j = Math.max(0, cj - radius); j <= Math.min(city.H - 1, cj + radius); j++) for (let i = Math.max(0, ci - radius); i <= Math.min(city.W - 1, ci + radius); i++) {
+      const v = j * VW + i, d = Math.min(vm.get(v) ?? Infinity, vm.get(v + 1) ?? Infinity, vm.get(v + VW) ?? Infinity, vm.get(v + VW + 1) ?? Infinity) + CFG.walk.cellExtraM;
+      if (d > walkMax && d > bikeMax) continue;
+      const walkMin = d <= walkMax ? d / mpm : Infinity, bikeMin = d <= bikeMax ? d / speed + bike.transferMin : Infinity;
+      const chosen = bikeMin < walkMin ? result.bike : result.walk, minutes = Math.min(walkMin, bikeMin), c = j * city.W + i;
+      for (let q = 0; q < chosen.limits.length; q++) if (minutes <= chosen.limits[q]) { chosen.pop[q] += city.pop[c]; chosen.jobs[q] += city.jobs[c]; }
+    }
+    return result;
+  };
   // 分步执行（v2.5 性能）：月结时每处理一批车站让出主线程；结果与一次算完相同
   Model.prototype.computeAccess = function (C) { const it = this.computeAccessGen(C); let r = it.next(); while (!r.done) r = it.next(); return r.value; };
   Model.prototype.computeAccessGen = function* (C) {
@@ -1338,7 +1360,9 @@
         trees[k] = { verts: wv, dist: Float32Array.from(wv, v => D_[v]), pred: Int32Array.from(wv, v => pred[v]) };
         // 上限须高于大型线网的车站数（v2.3）：原先 512，六百多座车站时每次改线都清空重算全部步行树
         if (treeCache.size >= Math.max(2048, N * 2)) treeCache.clear();
-        treeCache.set(treeKey, { tree: trees[k], verts: Int32Array.from(touched), exact: Float64Array.from(touched, v => D_[v]) });
+        const accessVerts = Int32Array.from(touched), accessDist = Float64Array.from(touched, v => D_[v]);
+        trees[k].accessVerts = accessVerts; trees[k].accessDist = accessDist;
+        treeCache.set(treeKey, { tree: trees[k], verts: accessVerts, exact: accessDist });
       }
       // 只有接入运营线路的车站提供服务：未通车站不计覆盖、不参与接驳与站外换乘
       if (C.serviced && !C.serviced[k]) { for (const v of touched) D_[v] = INF; continue; }
