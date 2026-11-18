@@ -95,6 +95,7 @@ for (const [id, t, region] of [
   ['lingang_gangcheng', 'shop', 'lingang'], ['songjiang_uni', 'uni', 'songjiang'],
   ['zhangjiang_uni', 'uni', 'jinqiao'], ['minhang_uni', 'uni', 'minhang_new'],
   ['zizhu', 'industry', 'minhang_new'], ['sheshan', 'scenic', 'songjiang'],
+  ['chedun_film', 'scenic', 'songjiang'],
   ['chongming_air', 'air', 'chongming'],
 ]) {
   const f = facility('sh_' + id);
@@ -102,6 +103,18 @@ for (const [id, t, region] of [
   const actual = city.regionAt(f.x, f.y).id;
   assert.ok(actual === region || (region === 'minhang_new' && actual === 'wujing'), id + ': ' + actual);
 }
+const filmPark = facility('sh_chedun_film');
+const filmPoint = point(31.01204455, 121.30837442);
+assert.ok(Math.hypot(filmPark.x - filmPoint[0], filmPark.y - filmPoint[1]) < 0.02, 'Film park uses WGS-84 without double coordinate conversion');
+assert.equal(filmPark.open, 1999);
+assert.equal(Fac.active(filmPark, 1998.99, city), false);
+const filmRegion = city.region[city.cellAt(filmPark.x, filmPark.y)];
+assert.equal(city.regions[filmRegion].open, 2020, 'Film park follows the Songjiang district unlock');
+const filmRegionOpen = city.regionOpen[filmRegion]; city.regionOpen[filmRegion] = 0;
+assert.equal(Fac.active(filmPark, 2021, city), false); city.regionOpen[filmRegion] = filmRegionOpen;
+assert.equal(Fac.active(filmPark, 2020, city), true);
+assert.ok(Fac.share(filmPark, 2021) > 0); assert.equal(filmPark.p.lz, 1); assert.ok(filmPark.we > 1);
+assert.ok(Fac.siteCells(filmPark, city).length > 0);
 for (const id of ['sh_pvg_terminal', 'sh_songjiang_station', 'sh_east_station', 'sh_baoshan_station',
   'sh_oly_stadium', 'sh_oly_aquatics', 'sh_oly_arena', 'sh_oly_village']) {
   const f = facility(id), c = city.cellAt(f.x, f.y);
