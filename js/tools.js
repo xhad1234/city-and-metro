@@ -494,11 +494,8 @@
     const key = [x.toFixed(3), y.toFixed(3), seg ? seg.id : '', this.portalHover || '', g.draft ? g.draft.ver : g.netVersion, g.rev].join('|');
     if (this._pvName && this._pvName.key === key) return this._pvName.name;
     let name = '';
-    const f = this.portalHover && CM.Fac ? CM.Fac.byId(this.portalHover) : null;
-    if (f) {
-      const used = new Set(Object.values(net.stations).map(function (s) { return s.name; }));
-      name = CM.Fac.shortName(f); if (used.has(name)) name += '接驳';
-    } else {
+    if (this.portalHover) name = M.suggestName(net, x, y, g.city, this.portalHover);
+    else {
       let px = x, py = y;
       if (seg) { const pts = M.segGeom(net, seg, g.city).pts; U.distToPoly(x, y, pts); const i = U._i, t = U._t; if (pts[i + 1]) { px = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t; py = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t; } }
       name = M.suggestName(net, px, py, g.city);

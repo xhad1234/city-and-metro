@@ -526,6 +526,7 @@
     // 线路配色参考上海地铁
     lineColorsNice: ['#e3002b', '#8cc220', '#fcd600', '#461d84', '#944d9a', '#d40068', '#ed6f00', '#0094d8', '#87caed', '#c6afd4', '#871c2b', '#007a60', '#e999c0', '#626020', '#bca886', '#98d1c0', '#bc796f', '#c4984f'],
     places: (G.places || []).map(function (p) { return [p[0], p[1], p[2], p[3]]; }),
+    stationNames: CM.SH_STATION_NAMES,
   };
   // 第一批是紧邻原图的主城区外围，第二批是其余新城、岛屿和滨海地区。
   const oldRegionIds = data.regions.map(r => r.id).concat('outer');

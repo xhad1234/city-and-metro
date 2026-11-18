@@ -673,15 +673,12 @@
   };
   M.addStation = function (net, x, y, opts, city) {
     const id = M.newId(net, 's');
-    net.stations[id] = { id: id, name: M.suggestName(net, x, y, city), x: x, y: y, size: opts.size || 'M', type: opts.type || 'underground' };
-    // 地图外设施的接驳口车站（v2.1）：记下所接通的设施，站名取设施名
+    net.stations[id] = { id: id, name: M.suggestName(net, x, y, city, opts.portal), x: x, y: y, size: opts.size || 'M', type: opts.type || 'underground' };
+    // 接驳口保留连接身份，命名和放置预览使用相同的优先级。
     if (opts.portal && CM.Fac) {
       const f = CM.Fac.byId(opts.portal);
       if (f) {
         net.stations[id].portal = f.id;
-        const used = new Set(Object.values(net.stations).map(function (s) { return s.name; }));
-        let nm = CM.Fac.shortName(f); if (used.has(nm)) nm += '接驳';
-        net.stations[id].name = nm;
       }
     }
     return id;
@@ -849,22 +846,66 @@
     return Array.from(set);
   };
 
-  // 车站命名
-  M.suggestName = function (net, x, y, city) {
+  // 新站命名：真实车站 → 永久公共地标 → 附近道路。已建车站和玩家自定义名称不重命名。
+  M.suggestName = function (net, x, y, city, portal) {
     const used = new Set(Object.values(net.stations).map(function (s) { return s.name; }));
-    const cands = D.places.map(function (p) { return { n: p[0], d: U.dist(x, y, p[1], p[2]), x: p[1], y: p[2] }; }).sort(function (a, b) { return a.d - b.d; });
-    for (const c of cands) { if (c.d > 3.2) break; if (!used.has(c.n)) return c.n; }
-    const c0 = cands[0];
-    if (c0 && c0.d < 7) {
-      const dx = x - c0.x, dy = y - c0.y;
-      const dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? '东' : '西') : (dy > 0 ? '南' : '北');
-      const nm = c0.n + dir;
-      if (!used.has(nm)) return nm;
+    const radius = 800 / CFG.CELL_M, roadRadius = 500 / CFG.CELL_M;
+    const point = (n, px, py) => ({ n: n, d: U.dist(x, y, px, py) });
+    const pick = cands => cands.filter(c => c.n && c.d <= radius && !used.has(c.n)).sort((a, b) => a.d - b.d)[0]?.n;
+    const stations = D.stationNames || (D.places || []).filter(p => p[3] === 0 || p[3] === 1);
+    const real = pick(stations.map(p => point(p[0], p[1], p[2])));
+    if (real) return real;
+    const landmarks = [], Fac = CM.Fac, yr = city.terrainYear || CFG.START.y;
+    // 类型白名单，不从商圈、医院、商务区、临时展会或自动生成的笼统设施取名。
+    const permanent = new Set(['park', 'scenic', 'rail', 'air', 'uni', 'stadium']);
+    const commercial = /商场|购物|商城|商厦|购物中心|商业中心|医院|诊所|百货|Shopping|Mall|Hospital|Clinic/i;
+    const facilities = Fac ? Fac.list(city) : [];
+    const inactiveNames = new Set(facilities.filter(f => !Fac.active(f, yr, city)).map(f => f.name));
+    for (const f of facilities) {
+      const sciencePark = f.t === 'cbd' && /科学园|科技园|产业园|开发区/.test(f.name);
+      if (f.gen || commercial.test(f.name) || (!permanent.has(f.t) && !sciencePark) || (f.ext && f.id !== portal)) continue;
+      if (f.id === portal) landmarks.push(point(Fac.shortName(f), x, y));
+      else if (!inactiveNames.has(f.name)) landmarks.push(point(f.name, f.x, f.y));
     }
+    for (let k = 0; k < (D.landmarks || []).length; k++) {
+      const l = D.landmarks[k];
+      if (!city.landmarkOn?.[k] || commercial.test(l.name)) continue;
+      if (['campus', 'park', 'themepark', 'rail', 'airport', 'temple', 'church', 'mosque', 'pagoda', 'palace', 'museum', 'monument', 'stadium', 'concert', 'tvtower'].includes(l.kind)) landmarks.push(point(l.name, l.x, l.y));
+    }
+    // OSM 公园保留实际名称；已知尚未开放的公园不提前参与命名。
+    const Geo = CM.Geo;
+    if (Geo?.ready) for (const p of Geo.parks || []) {
+      // 部分商业广场绿地也被标为 park；未经设施清单确认的绿地，只接受明确的公园 / 园林名称。
+      if (!p.name || !/公园|公園|植物园|植物園|动物园|動物園|森林|湿地|濕地|园林|園林|花园|花園|\bpark\b|\bgarden\b|\bjardin\b|\bparc\b/i.test(p.name) || commercial.test(p.name) || inactiveNames.has(p.name)) continue;
+      const b = p.bbox; if (!b || x < b[0] - radius || x > b[2] + radius || y < b[1] - radius || y > b[3] + radius) continue;
+      let distance = Infinity, inside = false;
+      for (const ring of p.rings) {
+        const a = ring.p;
+        for (let i = 0, j = a.length - 2; i < a.length; j = i, i += 2) {
+          distance = Math.min(distance, U.distToSeg(x, y, a[j], a[j + 1], a[i], a[i + 1]));
+          if ((a[i + 1] > y) !== (a[j + 1] > y) && x < (a[j] - a[i]) * (y - a[i + 1]) / (a[j + 1] - a[i + 1]) + a[i]) inside = !inside;
+        }
+      }
+      landmarks.push({ n: p.name, d: inside ? 0 : distance });
+    }
+    const landmark = pick(landmarks); if (landmark) return landmark;
+    const roads = [];
+    if (city.roadWays && city.roadWayBk) {
+      for (const k of Geo.query(city.roadWayBk, x - roadRadius, y - roadRadius, x + roadRadius, y + roadRadius)) {
+        const way = city.roadWays[k], r = city.roadGroups[way.g];
+        if (!r.name || r.cls === 4 || (r.flags & 4) || !city.roadsBuilt[way.g]) continue;
+        const p = way.p; let d = Infinity;
+        for (let i = 0; i + 3 < p.length; i += 2) d = Math.min(d, U.distToSeg(x, y, p[i], p[i + 1], p[i + 2], p[i + 3]));
+        if (d <= roadRadius) roads.push({ n: r.name, d: d });
+      }
+    }
+    const road = pick(roads); if (road) return road;
+    // 相同道路上继续建站时，保留真实路名并加序号，保证不重名。
+    const nearby = roads.sort((a, b) => a.d - b.d)[0] || landmarks.filter(c => c.d <= radius).sort((a, b) => a.d - b.d)[0];
+    if (nearby) for (let k = 2; k <= used.size + 2; k++) { const nm = nearby.n + k; if (!used.has(nm)) return nm; }
     const rg = city.regionAt(x, y);
     const base = rg ? rg.name.replace(/（.*）/, '') : '新区';
-    for (let k = 1; k < 99; k++) { const nm = base + k + '站'; if (!used.has(nm)) return nm; }
-    return '新站';
+    for (let k = 1; k <= used.size + 1; k++) { const nm = base + k + '站'; if (!used.has(nm)) return nm; }
   };
 
   // ---------------- 选址检查 ----------------
