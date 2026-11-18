@@ -3,7 +3,7 @@
 (function (CM) {
   CM.CFG = {
     GAME_VERSION: '2.7.2',
-    TRAFFIC_MODEL: 8,      // 上海恢复1公里交通小区，旧交通缓存需要重算。
+    TRAFFIC_MODEL: 9,      // 取消骑行最近站限制，旧交通缓存需要重算。
     RULES_REVISION: 13,    // 升级前保留原存档备份。
     SAVE_FORMAT: 'city-metro-save',
     SAVE_VERSION: 2,

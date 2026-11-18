@@ -519,7 +519,7 @@
       if (!coverage) { body.replaceChildren(h('div', { class: 'callout warn' }, '车站周边暂无可通行的接驳道路，暂无覆盖。')); return; }
       const data = biking ? coverage.bike : coverage.walk;
       body.replaceChildren(self.kv(data.limits.map(function (t, q) { return [(biking ? '骑行接驳 ' : '步行 ') + U.fmtNum(t, 0) + ' 分钟内', U.fmtPeople(data.pop[q]) + ' 人 · ' + U.fmtPeople(data.jobs[q]) + ' 岗位']; })),
-        h('div', { class: 'note', style: { marginTop: '6px' } }, (potential ? '预览：通车前不计入覆盖。' : '') + '骑行仅接驳各线路沿道路最近的车站。按接驳耗时较短的方式归类，步行与骑行人数互不重复；耗时相同归步行。' + (biking ? '骑行接驳时间含 ' + CFG.bike.transferMin + ' 分钟换乘。' : '') + '各时间档为累计覆盖的居民和岗位，并非实际客流。'));
+        h('div', { class: 'note', style: { marginTop: '6px' } }, (potential ? '预览：通车前不计入覆盖。' : '') + '按道路接驳耗时较短的方式归类，步行与骑行人数互不重复；耗时相同归步行。' + (biking ? '骑行接驳时间含 ' + CFG.bike.transferMin + ' 分钟换乘。' : '') + '各时间档为累计覆盖的居民和岗位，并非实际客流。'));
     };
     update(); this.live.push(update);
     return body;

@@ -23,18 +23,22 @@ const compiled = { stations: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 8, y: 0 }, 
 let access = model.computeAccess(compiled); model.net = { C: compiled, acc: access };
 const entry = (z, s) => access.zl[z]?.find(e => e.s === s);
 assert.equal(entry(3, 0).bikeShare, 1);
-assert.equal(entry(3, 1).bikeShare, 0, 'A farther same-line station remains available only on foot');
-assert.equal(entry(3, 1).w, 1060 / 75);
-assert.ok(!access.bikeCells[1].has(3));
-assert.ok(access.bikeCells[2].has(10), 'A different line may have its own farther nearest station');
-assert.ok(!access.bikeCells[3].has(10), 'An unserved nearer station must not steal riders');
-assert.ok(entry(10, 2).byLine.blue > 0);
-assert.equal(entry(10, 2).byLine.red, undefined);
-city.pop.fill(0); city.pop[3] = 7;
-assert.equal(model.stationCoverage(0).bike.pop[2], 7);
-assert.equal(model.stationCoverage(1).bike.pop[2], 0);
-assert.equal(model.stationCoverage(1).walk.pop[2], 7, 'Walking/cycling coverage follows the same candidate restrictions');
+assert.equal(entry(3, 1).bikeShare, 1, 'A farther station on the same line is also available for cycling');
+assert.equal(entry(3, 1).w, 1060 / 225 + 5);
+assert.equal(entry(10, 2).bikeShare, 1, 'Cycling to another line remains available');
+assert.ok(!entry(10, 3), 'An unserved station cannot provide access');
+assert.equal(entry(3, 0).byLine, undefined, 'Access times do not depend on the chosen metro line');
+assert.equal(entry(0, 0).bikeShare, 0, 'Walking wins for a nearby origin');
+assert.equal(entry(39, 0), undefined, 'Stations beyond the cycling limit stay unavailable');
+city.pop.fill(0); city.jobs.fill(0); city.pop[3] = 7; city.jobs[3] = 11;
+for (const k of [0, 1]) {
+  const cov = model.stationCoverage(k);
+  assert.equal(cov.bike.pop[2], 7); assert.equal(cov.bike.jobs[2], 11);
+  assert.equal(cov.walk.pop[2], 0); assert.equal(cov.walk.jobs[2], 0, 'Residents and jobs are exclusive between modes at each station');
+  assert.equal(cov.bike.pop[0], 0, 'The five-minute cycling band includes the transfer penalty');
+}
 city.pop.fill(1);
+city.jobs.fill(0);
 
 // The geometrically closer station has a road detour; use shortest road distance.
 for (let e = 0; e < to.length; e++) {
@@ -42,23 +46,24 @@ for (let e = 0; e < to.length; e++) {
   if ((from === 1 && to[e] === 2) || (from === 2 && to[e] === 1)) len[e] += 2000;
 }
 city.walk = { start, deg, to, len }; access = model.computeAccess(compiled);
-assert.ok(access.bikeCells[1].has(3), 'Road distance can favor the geometrically farther station');
-assert.ok(!access.bikeCells[0].has(3));
+assert.equal(entry(3, 0).bikeShare, 1, 'A road detour still permits cycling within the ride limit');
+assert.equal(entry(3, 0).w, 2810 / 225 + 5, 'Cycling time uses the road distance including its detour');
+assert.equal(entry(3, 1).bikeShare, 1);
 for (let e = 0; e < len.length; e++) len[e] = 250;
 city.walk = { start, deg, to, len };
 compiled.stations[1].x = 7; access = model.computeAccess(compiled);
-assert.ok(access.bikeCells[0].has(3)); assert.ok(!access.bikeCells[1].has(3), 'Equal distances use stable station order');
+assert.equal(entry(3, 0).bikeShare, 1); assert.equal(entry(3, 1).bikeShare, 1);
+assert.equal(entry(3, 0).w, entry(3, 1).w, 'Equally distant stations are both cycling candidates');
 
 compiled.stations.push({ id: 'new', x: 3, y: 0 }); compiled.serviced.push(true); compiled.stationLines.push(new Set(['red']));
 access = model.computeAccess(compiled);
-assert.ok(!access.bikeCells[0].has(3)); assert.ok(!access.bikeCells[1].has(3));
-assert.equal(access.zl[3].find(e => e.s === 4).bikeShare, 0, 'A newly nearer station is best reached on foot; do not cycle past it');
-console.log('PASS road-nearest station per line, preserved walking, multiple lines, unserved stations, ties, coverage and cached-network updates');
-
-// An interchange must not borrow another line's nearest-station bicycle access.
-const interchange = { w: 6, walkW: 18, byLine: { red: 6 } }, lines = ['red', 'blue'];
-assert.equal(C.Model.accessTime(interchange, 0, lines), 6);
-assert.equal(C.Model.accessTime(interchange, 1, lines), 18);
-assert.equal(C.Model.accessTime({ w: 4 }, 1, lines), 4, 'Walk-only facilities retain their access time');
-assert.equal(C.CFG.bike.transferMin, 5); assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 8);
-console.log('PASS line-specific interchange access, walk-only facilities and unchanged bicycle speed/penalty');
+assert.equal(entry(3, 0).bikeShare, 1); assert.equal(entry(3, 1).bikeShare, 1, 'Adding a nearer station must not remove cycling to existing stations');
+assert.equal(entry(3, 4).bikeShare, 0, 'The newly nearby station is reached on foot');
+model.net = { C: compiled, acc: access };
+city.pop.fill(0); city.pop[3] = 7;
+assert.equal(model.stationCoverage(1).bike.pop[2], 7, 'Coverage agrees with the unrestricted cycling candidate');
+assert.equal(model.stationCoverage(4).walk.pop[0], 7);
+assert.equal(model.stationCoverage(4).bike.pop[2], 0);
+assert.equal(C.CFG.bike.transferMin, 5); assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 9);
+assert.equal(C.MAPS.sh.cfg.ZONE, 4);
+console.log('PASS unrestricted same-line cycling, road distances, walking choice, limits, inactive stations, ties, new stations, exclusive coverage and unchanged 1km Shanghai zones');
