@@ -15,27 +15,33 @@ for (let v = 0; v < V; v++) {
   deg[v] = to.length - start[v]; start[v + 1] = to.length;
 }
 const city = { W, H: 1, N: W, VW, V, vx, vy, pop: new Float32Array(W).fill(1), jobs: new Float32Array(W),
-  walk: { start, deg, to, len }, cellAt: x => Math.floor(x), zoneOf: c => c };
+  walk: { start, deg, to, len }, cellAt: x => Math.floor(x), zoneOf: c => c, waterDistAt: () => 1 };
 const model = Object.create(C.Model.prototype);
 Object.assign(model, { city, Z: W, heap: new C.U.Heap(64), zoneCells: Array.from({ length: W }, (_, i) => [i]) });
 const compiled = { stations: [{ id: 'a', x: 0, y: 0 }, { id: 'b', x: 8, y: 0 }, { id: 'c', x: 16, y: 0 }, { id: 'unserved', x: 12, y: 0 }],
   serviced: [true, true, true, false], stationLines: [new Set(['red']), new Set(['red']), new Set(['blue']), new Set(['blue'])] };
-let access = model.computeAccess(compiled); model.net = { C: compiled, acc: access };
+let access = model.computeAccess(compiled); model.net = { C: compiled, N: compiled.stations.length, acc: access };
 const entry = (z, s) => access.zl[z]?.find(e => e.s === s);
 assert.equal(entry(3, 0).bikeShare, 1);
 assert.equal(entry(3, 1).bikeShare, 1, 'A farther station on the same line is also available for cycling');
-assert.equal(entry(3, 1).w, 1060 / 225 + 5);
+assert.equal(entry(3, 1).w, 1060 / 225 + 2);
+assert.equal(entry(3, 1).cost, C.CFG.choice.walkW * entry(3, 1).w + 4);
 assert.equal(entry(10, 2).bikeShare, 1, 'Cycling to another line remains available');
 assert.ok(!entry(10, 3), 'An unserved station cannot provide access');
 assert.equal(entry(3, 0).byLine, undefined, 'Access times do not depend on the chosen metro line');
 assert.equal(entry(0, 0).bikeShare, 0, 'Walking wins for a nearby origin');
+assert.equal(entry(1, 0).bikeShare, 0, 'A 310 m ride loses once the model applies the transfer penalty');
+assert.equal(entry(1, 0).cost, C.CFG.choice.walkW * entry(1, 0).w);
+const timedAccess = model.tripAccess({ x: 1.24, y: 0 }).find(e => e.s === 0);
+assert.equal(timedAccess.mode, 'bike', 'The time tool compares elapsed time for the same 310 m approach');
+assert.equal(timedAccess.minutes, 310 / 225 + 2);
 assert.equal(entry(39, 0), undefined, 'Stations beyond the cycling limit stay unavailable');
 city.pop.fill(0); city.jobs.fill(0); city.pop[3] = 7; city.jobs[3] = 11;
 for (const k of [0, 1]) {
   const cov = model.stationCoverage(k);
   assert.equal(cov.bike.pop[2], 7); assert.equal(cov.bike.jobs[2], 11);
   assert.equal(cov.walk.pop[2], 0); assert.equal(cov.walk.jobs[2], 0, 'Residents and jobs are exclusive between modes at each station');
-  assert.equal(cov.bike.pop[0], 0, 'The five-minute cycling band includes the transfer penalty');
+  assert.equal(cov.bike.pop[0], 0, 'The 810 m and 1060 m approaches take more than five elapsed minutes');
 }
 city.pop.fill(1);
 city.jobs.fill(0);
@@ -47,7 +53,7 @@ for (let e = 0; e < to.length; e++) {
 }
 city.walk = { start, deg, to, len }; access = model.computeAccess(compiled);
 assert.equal(entry(3, 0).bikeShare, 1, 'A road detour still permits cycling within the ride limit');
-assert.equal(entry(3, 0).w, 2810 / 225 + 5, 'Cycling time uses the road distance including its detour');
+assert.equal(entry(3, 0).w, 2810 / 225 + 2, 'Cycling uses the road distance plus preparation time');
 assert.equal(entry(3, 1).bikeShare, 1);
 for (let e = 0; e < len.length; e++) len[e] = 250;
 city.walk = { start, deg, to, len };
@@ -64,6 +70,7 @@ city.pop.fill(0); city.pop[3] = 7;
 assert.equal(model.stationCoverage(1).bike.pop[2], 7, 'Coverage agrees with the unrestricted cycling candidate');
 assert.equal(model.stationCoverage(4).walk.pop[0], 7);
 assert.equal(model.stationCoverage(4).bike.pop[2], 0);
-assert.equal(C.CFG.bike.transferMin, 5); assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 9);
+assert.equal(C.CFG.bike.startMin, 2); assert.equal(C.CFG.bike.transferPenalty, 4);
+assert.equal(C.CFG.bike.speedRatio, 3); assert.equal(C.CFG.TRAFFIC_MODEL, 9);
 assert.equal(C.MAPS.sh.cfg.ZONE, 4);
 console.log('PASS unrestricted same-line cycling, road distances, walking choice, limits, inactive stations, ties, new stations, exclusive coverage and unchanged 1km Shanghai zones');

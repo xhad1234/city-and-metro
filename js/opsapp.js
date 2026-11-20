@@ -263,6 +263,7 @@
       this._opsDaily = g.model.daily;
       this.opsApp.refresh();
     }
+    if (this.opsApp && !g.jumping && !g.pending) this.opsApp.updateStation();
     const ym = g.ym();
     if (this._opsYm === ym) return;
     if (g.jumping || g.pending || !g.model.trafficReady()) return;
@@ -871,19 +872,36 @@
       setBar([rootCrumb, [s.name]]);
       const official = !!g.net.stations[sid], ls = M.stationLines(net, sid).map(function (l) { return net.lines[l]; }).filter(Boolean);
       const C = g.model.net ? g.model.net.C : null, k = C ? C.sIndex.get(sid) : undefined, sd = g.model.stDaily, sw = g.model.stDailyWk, serviced = k !== undefined && !!C.serviced[k], live = serviced && sd && !g.model.dailyStale && k < sd.inn.length;
-      const cap = CFG.metro.stationCap[s.size], peak = live && sw ? sw.peak[k] : 0, load = peak / cap, kind = s.lv ? M.levelsText(M.stationLevels(net, sid)) : CFG.metro.typeName[s.type], I = official ? self.todInfo(sid) : null;
+      const operating = C && k !== undefined ? C.stations[k] : s;
+      const cap = CFG.metro.stationCap[operating.size], kind = s.lv ? M.levelsText(M.stationLevels(net, sid)) : CFG.metro.typeName[s.type], I = official ? self.todInfo(sid) : null;
+      const state = tag(official ? stationState({ live: serviced, load: live && sw ? sw.peak[k] / cap : 0 }) : ['', '草案']);
       const headCard = h('section', { class: 'mc-card mc-dh' },
         h('span', { class: 'mc-swatch mc-st' }, ic('metro', 22)),
         h('div', { class: 'mc-dh-t' },
           nameInput(s.name, 16, '车站名称', function (el) { const r = self.setStationName(sid, el.value); if (r && r.error) { self.toast(r.error, 'bad'); el.value = s.name; } }),
-          h('div', { class: 'mc-meta' }, official ? tag(stationState({ live: serviced, load: load })) : tag(['', '草案']), h('span', null, CFG.metro.sizeName[s.size] + '车站'), h('span', null, kind),
+          h('div', { class: 'mc-meta' }, state, h('span', null, CFG.metro.sizeName[s.size] + '车站'), h('span', null, kind),
             ls.map(function (L) { return h('button', { class: 'mc-chip', 'data-tip': '打开线路', onclick: function () { openLine(L.id); } }, lb(L), L.name); }))),
         official ? h('button', { class: 'btn sm', 'data-tip': '在地图上定位这座车站', onclick: then(function () { A.locate(g, self, { kind: 'station', id: sid }); }) }, ic('locate', 14), '定位') : null);
-      const kpis = live ? h('div', { class: 'mc-kpis' },
-        kpi('日进站', U.fmtPeople(sd.inn[k])), kpi('日出站', U.fmtPeople(sd.out[k])), kpi('日换乘', U.fmtPeople(sd.xfer[k])),
-        kpi('高峰负荷', U.fmtPct(load, 0), U.fmtInt(peak) + ' / ' + U.fmtInt(cap) + ' 人次/时', loadCls(load)),
-        kpi('站台规模', CFG.metro.sizeName[s.size], '最长 ' + CFG.metro.carsBySize[s.size] + ' 节'),
-        I ? kpi('商业开发', I.lv ? '第 ' + I.lv + ' 级' : '未开发', I.lv ? '每月净 ' + U.fmtMoney(I.net(I.lv)) : '') : null) : null;
+      const pending = '计算中', waiting = local(pending);
+      const flows = serviced ? [kpi('日进站', pending), kpi('日出站', pending), kpi('日换乘', pending)] : [];
+      const peakKpi = serviced ? kpi('工作日高峰负荷', pending, ' ') : null;
+      const kpis = official ? h('div', { class: 'mc-kpis' }, flows, peakKpi,
+        kpi('站台规模', CFG.metro.sizeName[operating.size], '最长 ' + CFG.metro.carsBySize[operating.size] + ' 节'),
+        I ? kpi('商业开发', I.lv ? '第 ' + I.lv + ' 级' : '未开发', I.lv ? (live ? '每月净 ' + U.fmtMoney(I.net(I.lv)) : '收益计算中') : '') : null) : null;
+      if (serviced) {
+        const values = flows.map(el => el.querySelector('b')), peakValue = peakKpi.querySelector('b'), peakNote = peakKpi.querySelector('span');
+        st.updateStation = function () {
+          const model = g.model, read = !model.refreshing && model.net.C === C ? model.stationReadout(k) : null;
+          const avg = read && read.avg, wd = read && read.wd;
+          ['inn', 'out', 'xfer'].forEach((key, i) => { values[i].textContent = avg ? U.fmtPeople(avg[key]) : waiting; });
+          const load = wd ? wd.peak / cap : 0, status = wd ? stationState({ live: true, load: load }) : ['', pending];
+          peakKpi.className = 'mc-kpi ' + loadCls(load);
+          peakValue.textContent = wd ? U.fmtPct(load, 0) : waiting;
+          peakNote.textContent = (wd ? U.fmtInt(wd.peak) + ' / ' : '') + U.fmtInt(cap) + ' ' + local('人次/时');
+          state.className = 'mc-tag ' + status[0]; state.textContent = local(status[1]);
+        };
+        st.updateStation();
+      }
       const bar2 = tabBar('station', [['info', '拥挤诊断'], ['build', '规模与站台'], ['tod', '商业开发'], ['decor', '车站装修']], official, 'build'), tab = st.tab.station, refresh = function () { draw(); };
       const artCap = CFG.metro.sizeName[s.size] + '车站 · ' + kind + ' · 最长 ' + CFG.metro.carsBySize[s.size] + ' 节' + (s.tod ? ' · 商业第 ' + s.tod + ' 级' : '');
       const preview = h('div', { class: 'mc-cols' },
@@ -985,6 +1003,7 @@
       if (CM.game !== g) { close(null, true); return; }
       const keepLive = self.live;   // 详情面板的定时刷新项不受影响；App 内容按月与操作刷新
       self.live = [];
+      st.updateStation = null;
       // 界面只读线网：绘制期间共用线路与区段索引（v2.6），线路多时打开和翻页不再一次次遍历全网
       M.withSegIndex([g.net, g.draft && g.draft.net], VIEWS[st.view] || overview);
       self.live = keepLive;
@@ -1034,7 +1053,7 @@
       if (editing) refreshAfterEdit = true;
       if (editing || (refreshAfterEdit && editPointer != null) || st.hold || st.view === 'fare') { drawRail(); drawDraft(); return; }
       app.classList.add('quiet'); const top = content.scrollTop; draw(); content.scrollTop = top;
-    }, el: app, state: function () { return { root: st.root, view: st.view, id: st.id, tab: st.view === 'line' ? st.tab.line : (st.view === 'station' ? st.tab.station : (st.view === 'fare' ? st.tab.fare : null)) }; } };
+    }, updateStation: function () { if (st.updateStation) st.updateStation(); }, el: app, state: function () { return { root: st.root, view: st.view, id: st.id, tab: st.view === 'line' ? st.tab.line : (st.view === 'station' ? st.tab.station : (st.view === 'fare' ? st.tab.fare : null)) }; } };
     const scheduleEditorRefresh = function () {
       if (!refreshAfterEdit || editPointer != null) return;
       clearTimeout(refreshTimer);

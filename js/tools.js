@@ -14,12 +14,17 @@
     this.curveMode = CM.Settings.get('curveMode') === 'pass' ? 'pass' : 'smooth';   // 绘线线形（v2.1）
     this.chain = null; this.bends = [];
     this.cursor = null; this.hover = null; this.hint = null; this.meas = { pts: [], done: false };
+    this.tripTime = { points: [], period: 0, result: null, stamp: '' };
     this.ptr = null; this.drag = null;
     this.touches = new Map(); this.pinch = null; this.multiTouch = false;
     this.keys = new Set();
     this.bind();
   }
   CM.Tools = Tools;
+  Tools.tripPathStyles = {
+    walk: { color: '#006f5d', dash: [4, 4] },
+    bike: { color: '#a64912', dash: [10, 4, 2, 4] },
+  };
 
   Tools.prototype.game = function () { return CM.game; };
   Tools.prototype.setTool = function (t) {
@@ -28,6 +33,7 @@
     if (this.ui.closeLinePicker) this.ui.closeLinePicker();
     this.tool = t;
     this.chain = null; this.bends = []; this.drag = null; this.hint = null; this.hover = null; this.lineLock = false; this.snapPt = null; this.lastSeg = null; this.meas = { pts: [], done: false };
+    this.tripTime = { points: [], period: 0, result: null, stamp: '' };
     this.ui.setTooltip(null);
     this.ui.onToolChange(t);
   };
@@ -252,6 +258,13 @@
     let w = this.world(sx, sy, this.buildH());
     this.cursor = { sx: sx, sy: sy, x: w.x, y: w.y, mod: mod }; this.cursorOut = false;
     this.snapPt = null;
+    if (this.tool === 'tripTime') {
+      const st = g.net.stations[R.pickStation(sx, sy)];
+      this.hover = null; this.portalHover = null;
+      this.ui.setTooltip(st ? { title: st.name, lines: [] } : null, sx, sy);
+      R.cv.style.cursor = 'var(--cur-crosshair)';
+      return;
+    }
     const pp = !mod ? this.portalPick(sx, sy, R.pickStation(sx, sy)) : null;
     if (pp) {
       this.hover = pp.sid ? { kind: 'station', id: pp.sid } : null;
@@ -381,6 +394,63 @@
       ctx.fillStyle = '#fff'; ctx.strokeStyle = '#1e73d8'; ctx.lineWidth = 2.4; ctx.beginPath(); ctx.arc(q[i].x, q[i].y, 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
       if (i) tag(ctx, q[i].x, q[i].y - 18, U.fmtKm(sum * CFG.CELL_M), 'rgba(30,115,216,0.94)');
     }
+    ctx.restore();
+  };
+  Tools.prototype.setTripPoints = function (points) {
+    const t = this.tripTime;
+    t.points = points; t.result = null; t.stamp = '';
+    this.ui.refreshTripTime(true);
+  };
+  Tools.prototype.updateTripTime = function () {
+    const t = this.tripTime, g = this.game();
+    if (!g || t.points.length !== 2) return false;
+    const m = g.model, pending = !!(g.pending || g.jumping || m.refreshing || m.net?.C !== g.compiled || m.accessWalk !== g.city.walk);
+    const stamp = [m.version, g.netVersion, pending].join('|');
+    if (stamp === t.stamp) return false;
+    t.stamp = stamp;
+    t.net = m.net;
+    t.result = pending ? { status: 'pending' } : m.tripTime(...t.points);
+    return true;
+  };
+  Tools.prototype.drawTripTime = function (ctx, R) {
+    const t = this.tripTime, g = this.game(), trip = t.net === g.model.net && t.result?.periods?.[t.period];
+    ctx.save(); ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (trip) for (const leg of trip.sections) {
+      if (leg.kind !== 'ride') continue;
+      const rt = g.model.net.C.routes[leg.r];
+      const n = rt.legSec.length;
+      ctx.beginPath();
+      for (let k = 0; k < leg.stops; k++) {
+        const i = (leg.first + (leg.dir ? -k : k) + n) % n;
+        const start = rt.stopPt[i + leg.dir], end = rt.stopPt[i + 1 - leg.dir], step = leg.dir ? -1 : 1;
+        for (let j = start; j !== end + step; j += step) {
+          const p = R.P(rt.pts[j][0], rt.pts[j][1], rt.hs[j]);
+          if (!k && j === start) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+        }
+      }
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 8; ctx.stroke();
+      ctx.strokeStyle = AX.line(rt.line); ctx.lineWidth = 4.5; ctx.stroke();
+    }
+    if (trip) for (const leg of trip.sections) {
+      if (!leg.paths?.length) continue;
+      const style = Tools.tripPathStyles[leg.mode === 'bike' ? 'bike' : 'walk'];
+      ctx.beginPath();
+      for (const path of leg.paths) path.forEach(function ([x, y], i) {
+        const p = R.P(x, y, 0);
+        if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y);
+      });
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 6.5; ctx.stroke();
+      ctx.setLineDash(style.dash);
+      ctx.strokeStyle = style.color; ctx.lineWidth = 3.5; ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    t.points.forEach(function (point, i) {
+      const st = g.net.stations[point.station];
+      const p = R.P(st ? st.x : point.x, st ? st.y : point.y, 0);
+      tag(ctx, p.x, p.y - 23, i ? 'B' : 'A', i ? '#be4161' : '#2461b5');
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = i ? '#be4161' : '#2461b5'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 4.5, 0, 2 * Math.PI); ctx.fill(); ctx.stroke();
+    });
     ctx.restore();
   };
   // 框选结果：框内的车站；两端都在框内的轨道，以及穿过框而两端都在框外的轨道（一端在框内的轨道随车站按拆站规则处理）
@@ -605,6 +675,15 @@
   Tools.prototype.onClick = function (sx, sy, mod, multiKey) {
     const g = this.game(), R = this.R;
     if (g.jumping) return;
+    if (this.tool === 'tripTime') {
+      const id = R.pickStation(sx, sy), s = g.net.stations[id], p = s || this.world(sx, sy, 0);
+      if (g.city.cellAt(p.x, p.y) < 0) return;
+      const point = { x: p.x, y: p.y, station: s ? id : null };
+      const points = this.tripTime.points;
+      this.setTripPoints(points.length === 1 ? [points[0], point] : [point]);
+      sfx('soft');
+      return;
+    }
     let w = this.world(sx, sy, this.buildH());
     let st = R.pickStation(sx, sy);
     let seg = st ? null : R.pickSegment(sx, sy);
@@ -797,6 +876,7 @@
     if (this.tool === 'line') this.endChain();
     else if (this.tool === 'demolish') { if (this.ui.multi) this.ui.clearMulti(); }
     else if (this.tool === 'measure') { const m = this.meas; if (m.pts.length >= 2 && !m.done) m.done = true; else this.clearMeasure(); this.updateHover(e.clientX, e.clientY, false); }
+    else if (this.tool === 'tripTime') this.setTripPoints([]);
     // 选择工具：右键车站或线路弹出快捷操作菜单（v2.1 第二轮）
     else if (this.tool === 'select' && e && CM.Quick) CM.Quick.context(e.clientX, e.clientY);
   };
@@ -969,6 +1049,7 @@
     // 快捷操作的气泡或右键菜单打开时，Esc 只关闭它们
     if (CM.Quick && CM.Quick.busy()) { CM.Quick.close(); return; }
     if (this.tool === 'measure') { if (this.meas.pts.length) this.clearMeasure(); else this.setTool('select'); return; }
+    if (this.tool === 'tripTime') { this.setTool('select'); return; }
     if (this.tool === 'demolish' && (ui.multi || this.boxSel)) { this.cancelDrag(); if (ui.multi) ui.clearMulti(); return; }
     // 依次收起：图层面板、搜索、右侧面板（指标、任务等；指标自带的图层随之恢复）、仍开着的图层——都不暂停；
     // 正在建设（非选择工具）时按原规则处理
@@ -1104,6 +1185,7 @@
     const g = this.game(); if (!g) return;
     const net = this.net();
     if (this.tool === 'measure') this.drawMeasure(ctx, R);
+    if (this.tool === 'tripTime') this.drawTripTime(ctx, R);
     const cur = this.cursor;
     this.drawLockHover(ctx, R, performance.now());
     // 网格吸附：缩放后间隔会变，按当前鼠标位置重新取交叉点，并画出淡色十字

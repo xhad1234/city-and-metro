@@ -16,6 +16,7 @@
     cbd: { name: '商务区', icon: 'building', p: { sh: 1 }, we: 0.35, L: 1.6, r: 1.4, group: '商业' },
     industry: { name: '产业园区', icon: 'building', p: { hw: 1 }, we: 1, L: 0, r: 1.4, group: '产业就业' },
     scenic: { name: '景点', icon: 'camera', p: { lz: 1 }, we: 1.25, L: 2.6, r: 0.8, group: '旅游休闲' },
+    library: { name: '图书馆', icon: 'book', p: { lz: 1 }, we: 1.05, L: 1.8, r: 0.8, group: '旅游休闲' },
     park: { name: '公园', icon: 'tree', p: { lz: 1 }, we: 1.15, L: 1.4, r: 1.0, group: '旅游休闲' },
     stadium: { name: '体育场馆', icon: 'stadium', p: { lz: 1 }, we: 1.3, L: 2.4, r: 0.6, group: '旅游休闲' },
     venue: { name: '会展中心', icon: 'expo', p: { sh: 0.6, lz: 0.4 }, we: 0.6, L: 2.4, r: 0.8, group: '商业' },
@@ -123,13 +124,14 @@
     (D.facilities || []).forEach(function (s, i) {
       const T = TYPES[s.t]; if (!T) return;
       const f = { k: out.length, id: s.id || ('f' + i), name: s.n, label: s.label || s.n, t: s.t, T: T, x: 0, y: 0, r: s.r != null ? s.r : T.r, lmK: -1,
-        open: null, close: yrOf(s.y1), w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
+        open: null, close: yrOf(s.y1), pause: s.pause ? s.pause.map(yrOf) : null, w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
         ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null, planned: !!s.interfacePlan } : null, rw: s.rw || null, noModel: !!s.noModel,
-        regionGate: !!s.regionGate, polygons: s.polygons || null, gameYear: !!s.gameYear };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
+        regionGate: !!s.regionGate, polygons: s.polygons || null, entrance: s.entrance || null, model: s.model || null, gameYear: !!s.gameYear,
+        leisureMultiplier: s.leisureMultiplier, layout: s.layout || null };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });
         if (k < 0) return;
-        f.lmK = k; f.x = lms[k].x; f.y = lms[k].y;
+        f.lmK = k; f.x = s.at?.[0] ?? lms[k].x; f.y = s.at?.[1] ?? lms[k].y;
         f.open = s.y0 != null ? yrOf(s.y0) : lms[k].year == null ? null : yrOf([lms[k].year, lms[k].month]);
       } else if (s.at) { f.x = s.at[0]; f.y = s.at[1]; f.open = s.y0 != null ? yrOf(s.y0) : -1e9; }
       else return;
@@ -221,9 +223,11 @@
     return c.pop[k] || 0;
   };
   Fac.byId = function (id) { const L = Fac.list(); for (const f of L) if (f.id === id) return f; return null; };
+  Fac.isPaused = (f, yr) => !!f.pause && yr >= f.pause[0] && yr < f.pause[1];
   // 是否在运营：启用年份之后、停用年份之前；引用地标的须地标已落成（填海等场地成陆后），其余须所在格为陆地
   Fac.active = function (f, yr, city) {
     if (yr < f.open || (f.close != null && yr >= f.close)) return false;
+    if (Fac.isPaused(f, yr)) return false;   // 装修改造闭馆，重开后沿用同一设施 ID
     if (f.lmK >= 0) return !!(city.landmarkOn && city.landmarkOn[f.lmK]);
     if (f.gen && (!city.regionOpen[f.gen.k] || Fac.regionPop(city, f.gen.k) < f.gen.min)) return false;
     const c = city.cellAt(f.x, f.y);
@@ -265,6 +269,7 @@
   Fac.sizeText = function (f, yr) {
     if (f.t === 'industry') return '按园区内现有岗位与通勤统计，随城市发展更新';
     if (f.T.hub) return '约 ' + U.fmtNum(Fac.pax(f, yr) / 1e4, 1) + ' 万人次/日的市内接驳出行（工作日，估算）';
+    if (f.leisureMultiplier != null) return '基础旅游休闲到访量 × ' + f.leisureMultiplier + '（游戏设定）';
     const keys = Object.keys(f.p), nm = CM.CFG.trips.name;
     return '约占全市' + keys.map(function (k) { return nm[k]; }).join('、') + '出行吸引的 ' + U.fmtPct(Fac.share(f, yr), 1) + '（估算）';
   };

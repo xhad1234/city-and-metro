@@ -7,6 +7,7 @@
   CM.LU_NAME = ['农村/待开发', '住宅', '商业办公', '工业仓储', '混合功能', '公园绿地', '学校与机构', '水域', '山地风景区', '机场', '历史地标'];
   const PLAN_KEYS = { RES: LU.RES, COM: LU.COM, IND: LU.IND, MIX: LU.MIX, INST: LU.INST };
   const CELL_KM2 = 0.0625;
+  const WALK_OPEN = 1, WALK_WATER = 2, WALK_RAIL = 4;
 
   let CITY_SEQ = 0;
   function City() {
@@ -128,6 +129,7 @@
     this.eOff = [0, nH, nH + nV, nH + nV + nD];
     const nTot = nH + nV + 2 * nD;
     this.eArt = new Uint8Array(nTot);   // 规划道路等级
+    this.eWalkRoad = D.walkRoads?.length || D.walkways ? new Uint8Array(nTot) : null;
     this.eName = new Uint16Array(nTot);
     this.eCls = new Uint8Array(nTot);   // 最终等级
     this.eBlock = new Uint8Array(nTot); // 跨水
@@ -188,7 +190,7 @@
     return g && this.heritage[c] === 2 ? g.name : String(this.regions[this.region[c]].name).replace(/（.*）/, '');
   };
   // 片区规划随年代改变（v2.6，码头关闭后改作商务区，D.replan）：之后这里长出的是办公楼。keepLu 为读档时（用地已从存档恢复）只改规划名称
-  City.prototype.applyReplan = function (year, keepLu) {
+  City.prototype.applyReplan = function (year, keepLu, storedRevision = Infinity) {
     const list = D.replan; if (!list) return [];
     const done = this._replan || (this._replan = {}), out = [];
     list.forEach(function (e, i) {
@@ -198,7 +200,8 @@
       const rg = this.regions[k]; if (!rg.plan0) rg.plan0 = rg.plan;
       rg.plan = e.plan; if (e.maxHeight) rg.maxHeight = e.maxHeight;
       out.push(e);
-      if (keepLu) return;
+      // 读入排期提前前的存档，补做当时尚未到执行年份的规划。
+      if (keepLu && !(storedRevision < e.revision && year < e.previousYear)) return;
       for (let c = 0; c < this.N; c++) {
         if (this.region[c] !== k || this.plan[c] === LU.WATER || this.plan[c] === LU.PARK || this.plan[c] === LU.HILL || this.plan[c] === LU.AIRPORT) continue;
         const p = this.planFor(c); this.plan[c] = p;
@@ -615,6 +618,7 @@
       for (let c = 0; c < N; c++) if (tmp[c] && self.landFrac[c] >= 0.5) { x += c % W + 0.5; y += ((c / W) | 0) + 0.5; n++; }
       return n ? [dl[0], x / n, y / n] : null;
     }).filter(Boolean);
+    if (D.townships) this.buildTownships(Geo, D.townships);
     // 建筑避让栅格：水域、道路、铁路处不放建筑（1 支路，2 干道/铁路，3 水域）
     const BW = W * BS, BH = H * BS;
     this.BS = BS; this.BW = BW; this.BH = BH;
@@ -624,6 +628,55 @@
     for (const s of Geo.streets) Geo.stroke(bm, BW, BH, BS, s.p, 0.035, 1, free);
     for (const r of Geo.rail) if (!(r.flags & 2)) Geo.stroke(bm, BW, BH, BS, r.p, 0.07, 2, notWater);
     this.bmask = bm;
+  };
+
+  // 街镇名使用完整的行政范围，不沿原图边缘裁切。区域开放、用地与存档仍使用原来的区域编号。
+  City.prototype.buildTownships = function (Geo, spec) {
+    const W = this.W, H = this.H, districtIds = new Map(), names = new Map(), towns = [null];
+    const mapDistricts = new Set(spec.mapDistricts);
+    for (const [district, list] of spec.districts) {
+      const districtId = districtIds.size + 1;
+      districtIds.set(district, districtId);
+      for (const name of list.split(' ')) {
+        const id = towns.length;
+        names.set(name, id);
+        towns.push({ id, districtId, district, name, mapLabel: mapDistricts.has(district), bbox: [W, H, 0, 0], cells: 0 });
+      }
+    }
+    const districtGrid = new Uint8Array(this.N), grid = new Uint16Array(this.N);
+    Geo.fill(districtGrid, W, H, 1, Geo.admin, f => f.level === 6 ? districtIds.get(f.name) : 0);
+    Geo.fill(grid, W, H, 1, Geo.admin, f => f.level === 8 ? names.get(spec.aliases[f.name] || f.name) : 0);
+    if (spec.split) {
+      const { name, from, points } = spec.split, p = new Float32Array(points.flat());
+      const boundary = new Uint8Array(this.N), parent = names.get(from), target = names.get(name);
+      Geo.fill(boundary, W, H, 1, [{ rings: [{ p }], bbox: Geo.bbox(p) }]);
+      for (let c = 0; c < this.N; c++) if (grid[c] === parent && boundary[c]) grid[c] = target;
+    }
+    const sx = new Float64Array(towns.length), sy = new Float64Array(towns.length), huaqiao = names.get('花桥镇');
+    const outside = this.regions.findIndex(r => r.empty);
+    for (let c = 0; c < this.N; c++) {
+      const k = grid[c], town = towns[k];
+      if (!town) continue;
+      if ((k !== huaqiao && districtGrid[c] !== town.districtId) || this.region[c] === outside) { grid[c] = 0; continue; }
+      if (this.landMax[c] < 0.5) continue;
+      const i = c % W, j = (c / W) | 0, b = town.bbox;
+      b[0] = Math.min(b[0], i); b[1] = Math.min(b[1], j);
+      b[2] = Math.max(b[2], i + 1); b[3] = Math.max(b[3], j + 1);
+      sx[k] += i + 0.5; sy[k] += j + 0.5; town.cells++;
+    }
+    const closest = new Float64Array(towns.length).fill(Infinity);
+    for (let c = 0; c < this.N; c++) {
+      const k = grid[c], town = towns[k];
+      if (!town || this.landMax[c] < 0.5) continue;
+      const x = c % W + 0.5, y = ((c / W) | 0) + 0.5;
+      const d = U.dist(x, y, sx[k] / town.cells, sy[k] / town.cells);
+      if (d < closest[k]) { closest[k] = d; town.x = x; town.y = y; }
+    }
+    this.townshipGrid = grid;
+    this.townships = towns;
+  };
+  City.prototype.townshipAt = function (x, y) {
+    return this.townships?.[this.townshipGrid[this.cellAt(x, y)]] || null;
   };
 
   // 有符号水域距离（格）：陆地为正，水面为负
@@ -1016,9 +1069,40 @@
         if (inside && (inside >= 0.3 * n || (g.flags & 3))) g.year = Math.max(g.year, D.reclaim[f.k].year);
       }
     }
+    if (D.walkways) {
+      // Existing public streets and paths open with their local area and any known road opening.
+      const scheduled = new Map(), walkGroups = new Map();
+      for (const road of D.simRoads || []) scheduled.set(road.n, Math.min(scheduled.get(road.n) ?? Infinity, road.y));
+      const opensAt = (x, y) => {
+        const c = self.cellAt(x, y);
+        if (c < 0 || self.regions[self.region[c]].empty) return Infinity;
+        const host = self.lockRegion(c), region = self.regions[host];
+        return region?.open ?? (self.regions[self.region[c]].scenic ? CFG.START.y : Infinity);
+      };
+      for (let source = 0; source < D.walkways.ways.length; source++) {
+        const [nameId, flags, from, encoded] = D.walkways.ways[source];
+        const p = Geo.dec(encoded), name = D.walkways.names[nameId];
+        const mid = (p.length >> 2) * 2;
+        const areaYear = Math.max(opensAt(p[0], p[1]), opensAt(p[mid], p[mid + 1]), opensAt(p.at(-2), p.at(-1)));
+        if (!Number.isFinite(areaYear)) continue;
+        const year = Math.max(CFG.START.y, areaYear, from, yearOfName(name, flags, p) || 0, scheduled.get(name) || 0);
+        const key = [year, flags, Math.floor(p[mid] / 16), Math.floor(p[mid + 1] / 16)].join(':');
+        let g = walkGroups.get(key);
+        if (!g) {
+          g = { name: '', cls: 1, flags, year, ways: [], sources: [], bbox: [Infinity, Infinity, -Infinity, -Infinity], walkOnly: true };
+          walkGroups.set(key, g);
+          groups.push(g);
+        }
+        g.ways.push(p);
+        g.sources.push(source);
+        Geo.bbox(p, g.bbox);
+      }
+    }
     this.roadGroups = groups;
     this.roadWays = [];
-    groups.forEach(function (g, gi) { for (const p of g.ways) self.roadWays.push({ g: gi, p: p, bbox: CM.Geo.bbox(p) }); });
+    groups.forEach(function (g, gi) {
+      g.ways.forEach(function (p, i) { self.roadWays.push({ g: gi, p, bbox: Geo.bbox(p), walkSource: g.sources?.[i] }); });
+    });
     this.roadWayBk = CM.Geo.buckets(this.roadWays, 4, this.W, this.H);
     this.roadNames = [''].concat(groups.map(function (g) { return g.name; }));
     this.roadsBuilt = new Uint8Array(groups.length);
@@ -1027,7 +1111,9 @@
   City.prototype.applyRoadsGen = function* (year) {
     let changed = this.updateRail(year);
     const groups = this.roadGroups, BW = this.BW, BH = this.BH, bm = this.bmask;
+    const walkRoads = D.walkRoads, walk = this.eWalkRoad, collectors = D.collectorRoads;
     const notWater = function (v) { return v < 3; };
+    let railGeometry;
     for (let k = 0; k < groups.length; k++) {
       const g = groups[k];
       if (this.roadsBuilt[k] || g.year > year) continue;
@@ -1035,11 +1121,20 @@
       this.roadsBuilt[k] = 1; changed = true;
       // 建筑避让
       const hw = g.cls === 4 ? 0.1 : (g.cls === 3 ? 0.075 : 0.05);
-      if (!(g.flags & 2)) for (const p of g.ways) Geo2().stroke(bm, BW, BH, BS, p, (g.flags & 4) ? 0.04 : hw, 2, notWater);
-      // 车行格网：快速路与主干道（匝道除外）
-      if (g.cls >= 3 && !(g.flags & 4)) {
+      if (!(g.flags & 2) && !g.walkOnly) for (const p of g.ways) Geo2().stroke(bm, BW, BH, BS, p, (g.flags & 4) ? 0.04 : hw, 2, notWater);
+      // 主干道和指定的既有次干道直接进入格网，不依赖周边街区是否开发。
+      const mainWay = !(g.flags & 4);
+      const vehicle = mainWay && (g.cls >= 3 || (g.cls === 2 && collectors?.includes(g.name)));
+      const pedestrian = !vehicle && mainWay && walk && (g.walkOnly || walkRoads?.includes(g.name));
+      if (vehicle || pedestrian) {
         for (const p of g.ways) {
           for (let q = 0; q + 3 < p.length; q += 2) {
+            const gradeSeparated = g.walkOnly && (g.flags & 3);
+            const railHits = gradeSeparated ? [] : null;
+            if (gradeSeparated) {
+              railGeometry ||= this.railGeom();
+              railGeometry.surfHits(p[q], p[q + 1], p[q + 2], p[q + 3], (x, y) => railHits.push([x, y]));
+            }
             let i = U.clamp(Math.round(p[q]), 0, this.W), j = U.clamp(Math.round(p[q + 1]), 0, this.H);
             const i1 = U.clamp(Math.round(p[q + 2]), 0, this.W), j1 = U.clamp(Math.round(p[q + 3]), 0, this.H);
             const dx = Math.abs(i1 - i), dy = Math.abs(j1 - j), sx = i < i1 ? 1 : -1, sy = j < j1 ? 1 : -1;
@@ -1049,7 +1144,18 @@
               if (e2 > -dy) { err -= dy; ni += sx; }
               if (e2 < dx) { err += dx; nj += sy; }
               const e = this.edgeBetween(i, j, ni, nj);
-              if (g.cls > this.eArt[e] || (g.cls === this.eArt[e] && g.name && !this.eName[e])) { this.eArt[e] = g.cls; this.eName[e] = k + 1; }
+              if (pedestrian) {
+                let permissions = WALK_OPEN;
+                if (!g.walkOnly) permissions |= WALK_WATER;
+                if (gradeSeparated) {
+                  const mx = (i + ni) / 2, my = (j + nj) / 2;
+                  if (this.eBlock[e] === 1 && U.distToSeg(mx, my, p[q], p[q + 1], p[q + 2], p[q + 3]) < 0.4 &&
+                      this.crossesRiver(p[q], p[q + 1], p[q + 2], p[q + 3])) permissions |= WALK_WATER;
+                  if (railHits.some(([x, y]) => U.dist(mx, my, x, y) < 0.4)) permissions |= WALK_RAIL;
+                }
+                walk[e] |= permissions;
+              }
+              else if (g.cls > this.eArt[e] || (g.cls === this.eArt[e] && g.name && !this.eName[e])) { this.eArt[e] = g.cls; this.eName[e] = k + 1; }
               i = ni; j = nj;
             }
           }
@@ -1110,7 +1216,7 @@
     // 合法通道：真实道路（g ≥ 0 为道路组）与街道（g = −1）跨越地面铁路的位置
     const cx = [], cy = [], cg = [];
     const scan = function (p, g) { for (let q = 0; q + 3 < p.length; q += 2) surfHits(p[q], p[q + 1], p[q + 2], p[q + 3], function (x, y) { cx.push(x); cy.push(y); cg.push(g); }); };
-    for (const w of this.roadWays) scan(w.p, w.g);
+    for (const w of this.roadWays) if (!this.roadGroups[w.g].walkOnly) scan(w.p, w.g);
     for (const s of Geo.streets) scan(s.p, -1);
     const cbk = new Array(W * H);
     for (let i = 0; i < cx.length; i++) { const t = U.clamp(Math.floor(cy[i]), 0, H - 1) * W + U.clamp(Math.floor(cx[i]), 0, W - 1); (cbk[t] || (cbk[t] = [])).push(i); }
@@ -1232,6 +1338,45 @@
     }
   };
 
+  // 检查入口与候选站位之间确实有一条可步行路径。短接驳按地形检测，不跨水或运营中的地面铁路。
+  City.prototype.walkCanReach = function (entrance, sites, limit) {
+    const walk = this.walk, VW = this.VW;
+    if (!walk) return false;
+    const rail = this.railOn?.some(Boolean) ? this.railGeom() : null;
+    const connect = ([x, y], visit) => {
+      const c = this.cellAt(x, y);
+      if (c < 0 || this.waterDistAt(x, y) < 0) return;
+      const v0 = Math.floor(c / this.W) * VW + c % this.W;
+      for (const v of [v0, v0 + 1, v0 + VW, v0 + VW + 1]) {
+        if (!walk.deg[v]) continue;
+        const vx = this.vx[v], vy = this.vy[v], dx = vx - x, dy = vy - y;
+        if ([0.25, 0.5, 0.75].some(t => this.waterDistAt(x + t * dx, y + t * dy) < 0)) continue;
+        let blocked = false;
+        rail?.surfHits(x, y, vx, vy, (_, __, r) => { if (this.railOn[rail.fk[r]]) blocked = true; });
+        if (!blocked) visit(v, Math.hypot(dx, dy) * CFG.CELL_M);
+      }
+    };
+    const targets = new Map(), distances = new Map(), heap = new U.Heap(64);
+    const visit = (v, distance) => {
+      if (distance > limit || distance >= (distances.get(v) ?? Infinity)) return;
+      distances.set(v, distance);
+      heap.push(distance, v);
+    };
+    connect(entrance, visit);
+    if (!heap.n) return false;
+    for (const site of sites) connect(site, (v, distance) => {
+      if (distance < (targets.get(v) ?? Infinity)) targets.set(v, distance);
+    });
+    if (!targets.size) return false;
+    while (heap.n) {
+      const v = heap.pop(), distance = heap.lastKey;
+      if (distance > distances.get(v)) continue;
+      if (distance + (targets.get(v) ?? Infinity) <= limit) return true;
+      for (let e = walk.start[v]; e < walk.start[v + 1]; e++) visit(walk.to[e], distance + walk.len[e]);
+    }
+    return false;
+  };
+
   // 构建步行图（CSR）与汽车图（收缩后的路段 + 小区连接线）
   // 分步执行（v2.5 性能）：月结时每步之间让出主线程；结果与一次算完相同
   City.prototype.buildGraphs = function () { const it = this.buildGraphsGen(); while (!it.next().done); };
@@ -1242,14 +1387,17 @@
     this.computeRailBlock();
     yield;
     const eRail = this.eRail, eDet = this.eRailDet;
+    const mappedBridge = e => this.eArt[e] === 2 && !!(this.roadGroups[this.eName[e] - 1]?.flags & 1);
     // ---- 步行 ----
     const wDeg = new Int32Array(V + 1);
     const walkable = new Uint8Array(nTot);
+    const walkRoad = this.eWalkRoad;
     for (let e = 0; e < nTot; e++) {
       const c = this.eCls[e];
-      if (c < 1 || c === 4) continue;
-      if ((this.eBlock[e] && c < 3) || this.eBlock[e] === 2) continue;
-      if (eRail[e] === 2 && c < 3) continue;
+      const onRoad = walkRoad?.[e];
+      if (c === 4 || (c < 1 && !onRoad)) continue;
+      if (this.eBlock[e] === 2 || (this.eBlock[e] === 1 && c < 3 && !(onRoad & WALK_WATER) && !mappedBridge(e))) continue;
+      if (eRail[e] === 2 && c < 3 && !(onRoad & WALK_RAIL)) continue;
       walkable[e] = 1;
       const uv = this.edgeVerts(e); wDeg[uv[0]]++; wDeg[uv[1]]++;
     }
@@ -1274,7 +1422,7 @@
     const rules = CFG.CELL_M + '|' + CFG.ZONE + '|' + CFG.road.speed.join(',') + '|' + CFG.road.cap.join(',');
     let same = !!(this.car && prior && prior.rules === rules && prior.ways === this.roadWays && prior.cls.length === nTot && prior.vx.length === V);
     if (same) for (let v = 0; v < V; v++) if (prior.vx[v] !== vx[v] || prior.vy[v] !== vy[v]) { same = false; break; }
-    const carOn = function (e, c) { return c >= 2 && this.eBlock[e] !== 2 && !(c < 3 && (this.eBlock[e] || eRail[e] === 2)); }.bind(this);
+    const carOn = (e, c) => c >= 2 && this.eBlock[e] !== 2 && (c >= 3 || (eRail[e] !== 2 && (!this.eBlock[e] || mappedBridge(e))));
     const detOf = function (e, c) { return c < 3 ? eDet[e] : 0; };
     if (same && !prior.det) same = false;
     if (same) for (let e = 0; e < nTot; e++) {
@@ -1807,7 +1955,7 @@
     for (let c = 0; c < N; c++) if (this.lu[c] === LU.LANDMARK && !this.protectedId[c]) this.lu[c] = this.plan[c] === LU.LANDMARK ? LU.RES : this.plan[c];
     for (let k = 0; k < D.landmarks.length; k++) if (this.landmarkOn[k] && !D.landmarks[k].shore && !sited[k]) this.landmarkOn[k] = 0;
     this.applyReclaim(year, true);   // 历史海岸线恢复到存档年份（用地已从存档恢复）
-    this.applyReplan(year, true);
+    this.applyReplan(year, true, s.terrainRevision || 1);
     // 同范围地形修订：填海 / 机场边界校正及武汉河渠异常宽度修复，按当前地理重新核验旧档用地。
     // 旧存档的用地与新地形不一致的格就地修正：陆地上的水域格补成陆地，仍是海面的格改回水域，机场用地按新范围
     if ((s.terrainRevision || 1) < (D.terrainRevision || 1)) {
@@ -1847,6 +1995,7 @@
     this.populationRevision = s.populationRevision || 0;
     this.applyPopulationDistribution(year);
     this.eArt.fill(0); this.eName.fill(0); this.roadsBuilt.fill(0);
+    if (this.eWalkRoad) this.eWalkRoad.fill(0);
     yield;
     yield* this.applyRoadsGen(year);
     this.updateStreets();

@@ -24,10 +24,13 @@ assert.equal(new Set(sh.geo.admin.filter(a => a[0] === 6).map(a => sh.geo.names[
 assert.equal(CFG.growth.histEnd, 2026);
 assert.equal(Eras.current(2021).name, '后疫情时代');
 assert.equal(Eras.current(2027).name, '喜迎奥运');
-assert.equal(Eras.current(2040.92).name, '喜迎奥运');
-assert.equal(Eras.current(2041).name, '模拟未来');
+assert.equal(Eras.current(2036.92).name, '喜迎奥运');
+assert.equal(Eras.current(2037).name, '模拟未来');
 assert.ok(Eras.demand(2022 + 3 / 12).rate[0] < Eras.demand(2022 + 5 / 12).rate[0]);
-assert.ok(Eras.demand(2040 + 7 / 12).hub > Eras.demand(2040 + 8 / 12).hub);
+assert.ok(Eras.demand(2036 + 7 / 12).hub > Eras.demand(2036 + 8 / 12).hub);
+assert.ok(Eras.demand(2036 + 7 / 12).hub > Eras.demand(2040 + 7 / 12).hub);
+assert.equal(DATA.events.find(e => e.title === '上海获得 2036 年夏季奥运会主办权').y, 2027);
+assert.ok(Eras.finance(2027 + 8 / 12).grant > 1);
 assert.ok(Eras.finance(2031).grant > 1);
 assert.equal(Eras.finance(2042).grant, 1);
 
@@ -57,6 +60,27 @@ check('临港', 30.9165, 121.9060, 'lingang', beforeFar, afterFar);
 check('崇明岛', 31.6234, 121.3960, 'chongming', beforeFar, afterFar);
 check('长兴岛', 31.3931, 121.7179, 'changxing', beforeFar, afterFar);
 check('横沙岛', 31.3423, 121.8441, 'hengsha', beforeFar, afterFar);
+const streets = city.townships.slice(1);
+assert.equal(streets.length, 219);
+assert.ok(streets.every(t => t.cells > 0 && city.townshipAt(t.x, t.y) === t));
+assert.equal(streets.filter(t => t.mapLabel).length, 142);
+for (const [lat, lon, expected] of [
+  [31.0753065, 121.5445815, '浦江镇'], [31.11610, 121.04601, '朱家角镇'],
+  [31.301946, 121.100839, '花桥镇'], [30.9490393, 121.6381719, '头桥街道'],
+]) assert.equal(city.townshipAt(...point(lat, lon))?.name, expected);
+assert.ok(streets.some(t => t.name === '古美路街道'));
+const taskGame = Object.create(CM.Game.prototype);
+taskGame.city = city;
+const atTown = streets.find(t => t.name === '浦江镇');
+const firstTownCell = city.cellAt(atTown.x, atTown.y);
+taskGame.model = { zoneCells: [[firstTownCell]], zCx: [atTown.x], zCy: [atTown.y] };
+assert.equal(taskGame.zoneName(0), '浦江镇');
+const oldTask = { type: 'zoneCong', zone: 0, title: '减少「片区（闵行）」高峰汽车出行', deadline: [2025, 1], target: 0.4, samples: [[1, 0.45]] };
+taskGame.tasks = CM.Tasks.restore({ active: [oldTask] });
+const savedTasks = JSON.stringify(taskGame.tasks.serialize());
+assert.equal(CM.Tasks.displayTitle(taskGame.tasks.active[0], taskGame), '减少「浦江镇」高峰汽车出行');
+assert.equal(JSON.stringify(taskGame.tasks.serialize()), savedTasks, 'Display names never rewrite the stored task');
+console.log('PASS township names, map anchors and existing task titles without changes to the save data');
 check('昆山花桥', 31.301946, 121.100839, 'huaqiao', beforeFar, afterFar);
 const outsideHuaqiao = city.cellAt(...point(31.30, 121.025));
 assert.equal(afterFar[outsideHuaqiao], 1, 'Kunshan outside Huaqiao stays outside the buildable map');
@@ -115,6 +139,129 @@ assert.equal(Fac.active(filmPark, 2021, city), false); city.regionOpen[filmRegio
 assert.equal(Fac.active(filmPark, 2020, city), true);
 assert.ok(Fac.share(filmPark, 2021) > 0); assert.equal(filmPark.p.lz, 1); assert.ok(filmPark.we > 1);
 assert.ok(Fac.siteCells(filmPark, city).length > 0);
+for (const [id, region, type, lat, lon, opened] of [
+  ['oriental_land', 'qingpu', 'scenic', 31.1010166, 121.0142192, 2001],
+  ['guangfulin_relics', 'songjiang', 'scenic', 31.0609756, 121.1933306, 2018 + 5 / 12],
+  ['dongtan_wetland', 'chongming', 'park', 31.5188087, 121.9360746, 2010 + 3 / 12],
+]) {
+  const f = facility('sh_' + id), [x, y] = point(lat, lon), c = city.cellAt(f.x, f.y), k = city.region[c];
+  assert.equal(f.t, type);
+  assert.equal(city.regions[k].id, region);
+  assert.ok(Math.hypot(f.x - x, f.y - y) < 0.02, id + ' WGS-84 entrance');
+  assert.equal(f.open, opened);
+  assert.equal(Fac.active(f, opened - 0.01, city), false);
+  assert.equal(city.regions[k].open, 2020);
+  const old = city.regionOpen[k]; city.regionOpen[k] = 0;
+  assert.equal(Fac.active(f, 2020, city), false); city.regionOpen[k] = old;
+  assert.equal(Fac.active(f, 2020, city), true);
+  assert.ok(Fac.siteCells(f, city).length && Fac.share(f, 2021) > 0 && f.p.lz === 1 && f.we > 1, id + ' leisure demand');
+}
+const zhaojialou = facility('sh_zhaojialou');
+const [entranceX, entranceY] = point(31.0755904, 121.5424567);
+assert.equal(zhaojialou.name, '召稼楼古镇');
+assert.equal(zhaojialou.t, 'scenic');
+assert.ok(Math.hypot(zhaojialou.entrance[0] - entranceX, zhaojialou.entrance[1] - entranceY) < 0.02);
+assert.ok(city.landFrac[city.cellAt(...zhaojialou.entrance)] >= 0.5);
+assert.equal(zhaojialou.open, 2010 + 4 / 12);
+assert.equal(Fac.active(zhaojialou, 2021, city), true);
+assert.ok(Fac.share(zhaojialou, 2021) > 0 && zhaojialou.p.lz === 1 && zhaojialou.we > 1);
+assert.equal(Fac.active(zhaojialou, 2023, city), true);
+assert.equal(Fac.active(zhaojialou, 2023 + 1 / 12, city), false);
+assert.equal(Fac.active(zhaojialou, 2029 + 11 / 12, city), false);
+assert.equal(Fac.active(zhaojialou, 2030, city), true);
+const renovationLabel = DATA.mapLabels.find(l => l.name === '召稼楼古镇（改造中）');
+assert.equal(renovationLabel.from, zhaojialou.pause[0]);
+assert.equal(renovationLabel.to, zhaojialou.pause[1]);
+const ancientTownModel = new CM.Model(city, { deferDemand: true });
+ancientTownModel.setYear(2021);
+const ancientTownNodes = ancientTownModel.buildFacNodes();
+const ancientTownIndex = ancientTownModel.facIndex(zhaojialou.id);
+assert.ok(ancientTownNodes.ringFac.get(city.cellAt(...zhaojialou.entrance)).includes(ancientTownIndex));
+const [junctionX, junctionY] = point(31.076064, 121.5421316);
+const yuanxiang = facility('sh_yuanxiang');
+const [yuanxiangX, yuanxiangY] = point(31.3510782, 121.2613713);
+assert.ok(Math.hypot(yuanxiang.x - yuanxiangX, yuanxiang.y - yuanxiangY) < 0.02);
+assert.deepEqual(Array.from(yuanxiang.entrance), [yuanxiang.x, yuanxiang.y]);
+const yuanxiangRoad = city.roadGroups.findIndex(r => r.name === '远香湖公园南入口步道');
+assert.ok(yuanxiangRoad >= 0 && city.roadsBuilt[yuanxiangRoad]);
+assert.equal(city.roadGroups[yuanxiangRoad].year, 2015, 'The south entrance path opens with Jiading New City');
+assert.ok(city.car.links.some(link => city.roadNames[link.name] === '天祝路'), 'Tianzhu Road is present in the vehicle network');
+const [tianzhuX, tianzhuY] = point(31.3503698, 121.2597158);
+assert.equal(CM.Metro.checkSite(city, tianzhuX, tianzhuY, 'underground').ok, true);
+assert.equal(CM.Tasks.facServable(city, yuanxiang), true);
+const changxingPark = facility('sh_changxing_park');
+const [parkX, parkY] = point(31.398298, 121.7119214);
+assert.ok(Math.hypot(changxingPark.x - parkX, changxingPark.y - parkY) < 0.02);
+assert.deepEqual(Array.from(changxingPark.entrance), [changxingPark.x, changxingPark.y]);
+assert.equal(city.regionAt(parkX, parkY).id, 'changxing');
+assert.ok(Fac.active(changxingPark, 2021, city));
+const [qiuganX, qiuganY] = point(31.3982353, 121.7108288);
+const ancientTownAccess = ancientTownModel.computeAccess({
+  stations: [{ x: junctionX, y: junctionY }, { x: qiuganX, y: qiuganY }, { x: tianzhuX, y: tianzhuY }], serviced: [1, 1, 1],
+});
+assert.ok(ancientTownAccess.zl[ancientTownModel.Z + ancientTownIndex]?.some(e => e.s === 0 && e.w > 0),
+  'The Qinyubo Road entrance provides walking access to Zhaojialou');
+assert.ok(ancientTownAccess.zl[ancientTownModel.Z + ancientTownModel.facIndex(changxingPark.id)]?.some(e => e.s === 1 && e.w < 15),
+  'The south gate of Changxing Island Country Park is walkable from Qiugan Road');
+assert.ok(ancientTownAccess.zl[ancientTownModel.Z + ancientTownModel.facIndex(yuanxiang.id)]?.some(e => e.s === 2 && e.w < 15),
+  'The south entrance of Yuanxiang Lake Park is walkable from Tianzhu Road');
+ancientTownModel.setYear(2026);
+ancientTownModel.buildFacNodes();
+assert.equal(ancientTownModel.facIndex(zhaojialou.id), -1, 'Renovation pauses tourist trips');
+const expo = facility('sh_expo2010');
+assert.ok(Fac.active(expo, 2010 + 9 / 12, city) && !Fac.active(expo, 2011, city));
+for (const [id, type, region, opened] of [
+  ['expo_axis_mall', 'shop', 'pdriver', 2014 + 3 / 12],
+  ['expo_exhibition_hall', 'venue', 'pdriver', 2011 + 7 / 12],
+  ['expo_cultural_park', 'park', 'pdriver', 2021 + 11 / 12],
+  ['expo_conference_center', 'venue', 'pdriver', 2011],
+  ['world_expo_museum', 'scenic', 'huangpu', 2017 + 4 / 12],
+  ['power_station_of_art', 'scenic', 'huangpu', 2012 + 9 / 12],
+  ['qiantan_taikoo_li', 'shop', 'beicai', 2021 + 8 / 12],
+]) {
+  const f = facility('sh_' + id);
+  assert.equal(f.t, type, id);
+  assert.equal(city.regionAt(f.x, f.y).id, region, id);
+  assert.equal(f.open, opened, id);
+  assert.ok(f.open >= expo.close, id + ' must start after the temporary Expo demand');
+  assert.equal(Fac.active(f, opened - 0.01, city), false, id);
+  assert.equal(Fac.active(f, opened, city), true, id);
+  assert.ok(Fac.share(f, opened) > 0, id + ' must attract trips');
+}
+const expoPark = facility('sh_expo_cultural_park');
+assert.equal(Fac.share(expoPark, 2024 + 7 / 12), Fac.share(expoPark, expoPark.open));
+assert.ok(Fac.share(expoPark, 2024 + 8 / 12) > Fac.share(expoPark, 2024 + 7 / 12));
+for (const [id, type, opened, accessible = opened] of [
+  ['shanghai_museum_east', 'scenic', 2024 + 1 / 12],
+  ['science_tech_museum', 'scenic', 2001 + 11 / 12],
+  ['natural_history_museum', 'scenic', 2015 + 3 / 12],
+  ['astronomy_museum', 'scenic', 2021 + 6 / 12],
+  ['shanghai_library_east', 'library', 2022 + 8 / 12],
+  ['pudong_art_museum', 'scenic', 2021 + 6 / 12],
+  ['china_maritime_museum', 'scenic', 2010 + 6 / 12, 2020],
+]) {
+  const f = facility('sh_' + id), region = city.regionAt(f.x, f.y);
+  assert.equal(f.t, type, id);
+  assert.equal(f.open, opened, id);
+  assert.equal(Math.max(region.open, f.open), accessible, id);
+  assert.equal(Fac.active(f, opened - 0.01, city), false, id);
+  assert.equal(Fac.active(f, accessible, city), true, id);
+  assert.ok(Fac.share(f, accessible) > 0 && f.p.lz === 1, id + ' must attract leisure trips');
+}
+const museumEast = facility('sh_shanghai_museum_east'), scienceMuseum = facility('sh_science_tech_museum');
+assert.notEqual(city.cellAt(museumEast.x, museumEast.y), city.cellAt(scienceMuseum.x, scienceMuseum.y));
+assert.ok(Fac.share(museumEast, museumEast.open) < Fac.share(museumEast, 2024 + 5 / 12));
+assert.ok(Fac.share(museumEast, 2024 + 5 / 12) < Fac.share(museumEast, 2024 + 11 / 12));
+const scienceClosed = 2023 + 3 / 12, scienceReopened = 2026 + 1 / 12;
+assert.equal(Fac.active(scienceMuseum, scienceClosed - 0.01, city), true);
+assert.equal(Fac.active(scienceMuseum, scienceClosed, city), false);
+assert.equal(Fac.active(scienceMuseum, scienceReopened - 0.01, city), false);
+assert.equal(Fac.active(scienceMuseum, scienceReopened, city), true);
+const maritime = facility('sh_china_maritime_museum'), lingangIndex = city.regions.findIndex(r => r.id === 'lingang');
+assert.equal(city.region[city.cellAt(maritime.x, maritime.y)], lingangIndex);
+const oldLingang = city.regionOpen[lingangIndex]; city.regionOpen[lingangIndex] = 0;
+assert.equal(Fac.active(maritime, 2019, city), false, 'Maritime museum follows the Lingang unlock');
+city.regionOpen[lingangIndex] = oldLingang;
 for (const id of ['sh_pvg_terminal', 'sh_songjiang_station', 'sh_east_station', 'sh_baoshan_station',
   'sh_oly_stadium', 'sh_oly_aquatics', 'sh_oly_arena', 'sh_oly_village']) {
   const f = facility(id), c = city.cellAt(f.x, f.y);
@@ -140,23 +287,67 @@ for (const rw of DATA.runways.filter(r => r.from === 2035)) for (let t = 0; t <=
 }
 assert.equal(DATA.runways.filter(r => r.from === 2035).length, 2);
 assert.ok(DATA.events.some(e => e.y === 2035 && e.tag === '模拟' && e.title === '崇明国际机场启用'));
-assert.ok(Fac.share(facility('sh_oly_stadium'), 2040 + 7 / 12) > Fac.share(facility('sh_oly_stadium'), 2039) * 5);
+assert.ok(Fac.share(facility('sh_oly_stadium'), 2036 + 7 / 12) > Fac.share(facility('sh_oly_stadium'), 2035) * 5);
+assert.equal(Fac.share(facility('sh_oly_stadium'), 2040 + 7 / 12), Fac.share(facility('sh_oly_stadium'), 2037));
 assert.equal(CM.U.interp(CFG.growth.popCurve, 2040), 35_000_000);
 console.log('PASS Shanghai administrative coverage, release dates, Olympic state and hub dates');
 
 const modern = DATA.histTasks.filter(t => t.appear[0] >= 2021);
 assert.equal(new Set(DATA.histTasks.map(t => t.id)).size, DATA.histTasks.length);
 assert.ok(modern.some(t => t.appear[0] === 2021));
-assert.ok(modern.some(t => t.deadline[0] === 2045));
+assert.equal(Math.max(...modern.map(t => t.deadline[0])), 2041);
+for (const [id, appear, deadline] of [
+  ['sh14', [2027, 9], [2036, 7]],
+  ['sh-olympic-campus', [2029, 1], [2035, 6]],
+  ['sh-olympic-test', [2035, 7], [2036, 8]],
+  ['sh-olympic-legacy', [2037, 1], [2041, 12]],
+]) {
+  const task = modern.find(t => t.id === id);
+  assert.deepEqual(Array.from(task.appear), appear, id);
+  assert.deepEqual(Array.from(task.deadline), deadline, id);
+}
 for (const task of modern) {
   assert.ok(CM.U.ymIndex(...task.appear) < CM.U.ymIndex(...task.deadline), task.title);
   if (task.fac) assert.ok(facility(task.fac).open <= task.appear[0] + (task.appear[1] - 1) / 12);
+  if (task.type === 'connect') assert.equal(task.maxTransfers, 1, task.title);
   for (const a of task.anchors || []) {
     const c = city.cellAt(a.x, a.y);
     assert.ok(c >= 0 && city.landFrac[c] >= 0.5 && !afterFar[c], task.id + ' / ' + a.name);
   }
 }
-console.log('PASS 2021–2045 task dates, facility timing and map anchors');
+const minhangLink = modern.find(t => t.id === 'sh-reopen-campus');
+const campusStations = [{ x: 238.47, y: 384.07 }, { x: 243.92, y: 382.39 }, { x: 218.09, y: 345.38 }];
+const campusGame = { compiled: { stations: campusStations, serviced: [1, 1, 1], routes: [{ stIdx: [0, 1, 2] }] }, model: {} };
+const oldCampusLink = { ...minhangLink, maxTransfers: undefined, progress: { ok: true }, evaluatedYM: 24269, anchors: minhangLink.anchors.map(a => {
+  const f = a.facilityEntrance && facility(a.facilityEntrance);
+  return f ? { name: a.name, x: f.x, y: f.y, r: a.r, fixedSite: true } : a;
+}) };
+const campusTasks = CM.Tasks.restore({ active: [oldCampusLink] });
+assert.equal(campusTasks.evaluate(oldCampusLink, campusGame).ok, false);
+assert.equal(campusTasks.evaluate(minhangLink, campusGame).ok, true, 'Zizhu station can serve both the campus gate and the science park');
+const restoredCampusLink = campusTasks.active[0];
+assert.equal(restoredCampusLink.maxTransfers, 1);
+assert.equal(restoredCampusLink.progress, undefined);
+assert.equal(restoredCampusLink.evaluatedYM, undefined);
+assert.equal(campusTasks.evaluate(restoredCampusLink, campusGame).ok, true, 'Existing active tasks pick up campus gates and the transfer limit on restore');
+assert.equal(campusTasks.evaluate(minhangLink, campusGame, () => false).ok, false, 'Inactive services do not count');
+
+const transferStations = [0, 1, 2, 3, 4].map(x => ({ x, y: 0, r: 0.25, name: String(x) }));
+const transferCompiled = { stations: transferStations, serviced: [1, 1, 1, 1, 1], routes: [{ stIdx: [0, 1] }, { stIdx: [2, 3] }, { stIdx: [3, 4] }] };
+const transferGame = { compiled: transferCompiled, model: { net: { C: transferCompiled, acc: { transfers: [{ a: 1, b: 2 }] } } } };
+const transferGoal = (...stations) => ({ type: 'connect', maxTransfers: 1, anchors: stations.map(i => transferStations[i]) });
+assert.equal(campusTasks.evaluate(transferGoal(0, 1), transferGame).ok, true, 'Direct service counts');
+assert.equal(campusTasks.evaluate(transferGoal(2, 4), transferGame).ok, true, 'A shared transfer station counts');
+assert.equal(campusTasks.evaluate(transferGoal(0, 2), transferGame).ok, true, 'A recognised walking transfer counts');
+const transferChain = transferGoal(2, 0, 4);
+const gap = campusTasks.evaluate(transferChain, transferGame);
+assert.equal(gap.ok, false, 'Every pair must meet the limit');
+assert.deepEqual(Array.from(gap.transferGap), ['0', '4']);
+assert.equal(campusTasks.evaluate({ ...transferChain, maxTransfers: undefined }, transferGame).ok, true);
+transferGame.model.fleetOf = () => [{ manual: [[1, 0, 0, 0]] }, { manual: [[0, 1, 0, 0]] }, { avail: [0, 0] }];
+assert.equal(campusTasks.evaluate(transferGoal(0, 2), transferGame).ok, false, 'Transfer services must run during a shared period');
+assert.equal(campusTasks.evaluate(transferGoal(2, 4), transferGame).hits[1], false, 'An unstaffed route cannot cover an anchor');
+console.log('PASS 2021–2041 task dates, facility timing and map anchors');
 const development = DATA.events.find(e => e.title === '开发崇明：生态岛交通建设');
 assert.equal(development.y, 2025); assert.equal(development.m, 1);
 assert.equal(DATA.histTasks.filter(t => t.id.startsWith('sh-chongming-') && t.appear[0] === 2025).length, 2);
@@ -215,7 +406,10 @@ for (let c = 0; c < city.N; c++) {
 console.log('PASS town population shares, one-time save calibration and ground-colour consistency');
 
 const stadia = DATA.landmarks.filter(l => l.id.startsWith('sh_oly_'));
-city.activateLandmarks(2038);
+city.activateLandmarks(2033);
+assert.equal(city.landmarkOn[DATA.landmarks.indexOf(stadia[0])], 1);
+for (const l of stadia.slice(1)) assert.equal(city.landmarkOn[DATA.landmarks.indexOf(l)], 0);
+city.activateLandmarks(2034);
 for (const l of stadia) assert.equal(city.landmarkOn[DATA.landmarks.indexOf(l)], 1);
 const width = 24;
 const vertexWidth = width + 1;
@@ -242,11 +436,11 @@ const access = model.computeAccess(compiled);
 const m = c => c * CFG.CELL_M + CFG.walk.cellExtraM;
 assert.equal(access.zl[1][0].w, m(1) / 75);
 assert.equal(access.zl[1][0].bikeShare, 0);
-assert.equal(access.zl[2][0].bikeShare, 0, 'Five-minute bicycle handling makes walking preferable at 560 m');
-assert.equal(access.zl[2][0].w, m(2) / 75);
+assert.equal(access.zl[2][0].bikeShare, 1, 'Cycling remains faster at 560 m after the four-minute choice penalty');
+assert.equal(access.zl[2][0].w, m(2) / 225 + 2);
 assert.equal(access.zl[3][0].bikeShare, 1, 'Cycling remains preferable at 810 m');
-assert.equal(access.zl[4][0].w, m(4) / 225 + 5);
-assert.equal(access.zl[8][0].w, m(8) / 225 + 5);
+assert.equal(access.zl[4][0].w, m(4) / 225 + 2);
+assert.equal(access.zl[8][0].w, m(8) / 225 + 2);
 assert.equal(access.zl[8][0].bikeShare, 1);
 assert.equal(access.zl[8].length, 1, 'An unserved station cannot get bicycle riders');
 assert.equal(access.zCov[8], 1);
@@ -263,10 +457,10 @@ block.jobs = Float32Array.from({ length: width }, (_, c) => c + 10);
 const coverage = model.stationCoverage(0);
 assert.deepEqual(Array.from(coverage.walk.limits), [5, 10, 15]);
 assert.deepEqual(Array.from(coverage.bike.limits), [5, 10, 15], 'Both modes use the same total-access-time bands');
-assert.deepEqual(Array.from(coverage.walk.pop), [2, 3, 3]);
-assert.deepEqual(Array.from(coverage.bike.pop), [0, 2, 6], 'The five-minute bicycle band includes the handling penalty');
-assert.deepEqual(Array.from(coverage.walk.jobs), [21, 33, 33]);
-assert.deepEqual(Array.from(coverage.bike.jobs), [0, 27, 93]);
+assert.deepEqual(Array.from(coverage.walk.pop), [2, 2, 2]);
+assert.deepEqual(Array.from(coverage.bike.pop), [1, 5, 10], 'Cycling bands include preparation time');
+assert.deepEqual(Array.from(coverage.walk.jobs), [21, 21, 21]);
+assert.deepEqual(Array.from(coverage.bike.jobs), [12, 70, 165]);
 assert.ok(model.stationCoverage(1).bike.pop[2] > 0, 'An unserved station can preview potential cycling coverage');
 const cachedCoverage = model.stationCoverage(0);
 model.net.acc = model.computeAccess(compiled);
@@ -281,7 +475,7 @@ for (let c = 0; c < width; c++) {
 block.pop.fill(0); block.jobs.fill(0); block.pop[2] = 7;
 const oldExtra = CFG.walk.cellExtraM;
 try {
-  CFG.walk.cellExtraM = 62.5; // 562.5 m: walking and cycling both cost 7.5 min.
+  CFG.walk.cellExtraM = 6.25; // 506.25 m: walking and cycling each cost 10.8 equivalent minutes.
   assert.equal(model.stationCoverage(0).walk.pop[2], 7);
   assert.equal(model.stationCoverage(0).bike.pop[2], 0, 'Equal costs prefer walking');
 } finally { CFG.walk.cellExtraM = oldExtra; }
@@ -289,7 +483,54 @@ assert.equal(model.stationCoverage(99), null, 'Missing road access must not fabr
 console.log('PASS exclusive walking/cycling residents and jobs, cumulative bands, live population, cached trees and tie handling');
 
 const terminals = DATA.airportLayout.terminals;
-assert.equal(terminals.find(t => t.id === 'hq_t2').from, 2010 + 2 / 12);
+const hongqiaoT2 = terminals.find(t => t.id === 'hq_t2');
+assert.equal(hongqiaoT2.from, 2010 + 2 / 12);
+const airportLink = DATA.histTasks.find(t => t.id === 'sh-airport-link'), [hq, pvg] = airportLink.anchors;
+assert.deepEqual([hq.x, hq.y], [hongqiaoT2.x, hongqiaoT2.y]);
+assert.deepEqual([facility('sh_hqair').x, facility('sh_hqair').y], [hq.x, hq.y]);
+const [oldHqX, oldHqY] = point(31.1958, 121.3266);
+const oldAirportTask = { ...airportLink, progress: { ok: false }, evaluatedYM: 24300,
+  anchors: [{ ...hq, x: oldHqX, y: oldHqY, facilityEntrance: undefined }, pvg] };
+const restoredAirportTask = CM.Tasks.restore({ active: [oldAirportTask] }).active[0];
+assert.deepEqual([restoredAirportTask.anchors[0].x, restoredAirportTask.anchors[0].y], [hq.x, hq.y]);
+assert.equal(restoredAirportTask.anchors[1], pvg);
+assert.equal(restoredAirportTask.deadline, oldAirportTask.deadline);
+assert.equal(restoredAirportTask.progress, undefined);
+assert.equal(restoredAirportTask.evaluatedYM, undefined);
+for (const id of ['sh_station', 'sh_south', 'sh_hqstation', 'sh_songjiang_station', 'sh_west',
+  'sh_nanxiang_north', 'sh_anting_north', 'sh_anting_west', 'sh_jinshan_north', 'sh_liantang_station']) {
+  assert.ok(facility(id)?.layout?.area.length, id + ' has surveyed site geometry');
+}
+assert.ok(!listed.some(f => f.id.startsWith('sh_jsr_')), 'The Jinshan commuter railway has no added facilities');
+for (const id of ['sh_hqair', 'sh_pvg_terminal']) {
+  const f = facility(id);
+  assert.equal(CM.Metro.checkSite(city, f.x, f.y, 'underground').ok, true, id + ' allows a terminal metro station');
+}
+const songjiang = facility('sh_songjiang_station');
+assert.deepEqual([songjiang.x, songjiang.y], Array.from(songjiang.entrance));
+assert.ok(songjiang.layout.parts.length >= 2 && songjiang.layout.legacy.parts.length);
+assert.equal(Fac.active(songjiang, 2024 + 10 / 12, city), false);
+assert.equal(Fac.active(songjiang, 2024 + 11 / 12, city), true);
+city.activateLandmarks(2025);
+city.applyRoads(2025);
+city.updateStreets();
+city.buildGraphs();
+const songjiangHall = DATA.landmarks[songjiang.lmK];
+assert.equal(city.protectedId[city.cellAt(songjiangHall.x, songjiangHall.y)], songjiang.lmK + 1);
+assert.equal(CM.Metro.checkSite(city, songjiangHall.x, songjiangHall.y, 'underground').ok, true);
+const acrossHall = [[songjiangHall.x - 0.25, songjiangHall.y], [songjiangHall.x + 0.25, songjiangHall.y]];
+assert.equal(CM.Metro.geomFromControl(acrossHall, 'elevated', city).protM, 0);
+const protectedLandmark = DATA.landmarks.find(l => l.id === 'sh_pearl');
+assert.match(CM.Metro.checkSite(city, protectedLandmark.x, protectedLandmark.y, 'underground').msg, /受保护建筑/);
+assert.ok(city.car.links.some(link => city.roadNames[link.name] === '松礼路'));
+const songjiangModel = new CM.Model(city, { deferDemand: true });
+songjiangModel.setYear(2025);
+songjiangModel.buildFacNodes();
+const songjiangAccess = songjiangModel.computeAccess({ stations: [{ x: 159.9045, y: 397.6846 }], serviced: [1] });
+assert.ok(songjiangAccess.zl[songjiangModel.Z + songjiangModel.facIndex(songjiang.id)]?.some(e => e.s === 0 && e.w < 10),
+  'The metro station north of the rail hall can walk to the real interchange entrance');
+console.log('PASS Songjiang pedestrian access, surveyed rail sites, terminal construction and landmark protection');
+
 assert.equal(terminals.find(t => t.id === 'pvg_t3').from, 2028 + 11 / 12);
 assert.equal(Fac.active(facility('sh_pvg_t3'), 2028 + 10 / 12, city), false);
 assert.equal(Fac.active(facility('sh_pvg_t3'), 2028 + 11 / 12, city), true);
@@ -305,3 +546,136 @@ city.applyRoads(2026 + 6 / 12); assert.equal(city.roadsBuilt[cloud], 1);
 city.applyRoads(2028 + 10 / 12); assert.equal(city.roadsBuilt[ramp], 0);
 city.applyRoads(2028 + 11 / 12); assert.equal(city.roadsBuilt[ramp], 1);
 console.log('PASS actual terminal models, T3 opening, airport total conservation and monthly road phases');
+
+for (const name of ['墨江路', '北大道']) {
+  const road = city.roadGroups.findIndex(g => g.name === name);
+  assert.ok(road >= 0 && city.roadsBuilt[road], name + ' is part of the pre-existing street network');
+}
+for (const [name, year] of [
+  ['吴泾奥林匹克大道', 2033],
+  ['吴泾奥运村进场路', 2035 + 6 / 12],
+  ['吴泾奥运疏散联络路', 2036 + 7 / 12],
+  ['吴泾奥运村社区路', 2037],
+]) {
+  const road = city.roadGroups.findIndex(g => g.name === name);
+  assert.ok(road >= 0, name);
+  city.applyRoads(year - 1 / 12);
+  assert.equal(city.roadsBuilt[road], 0, name + ' opens on schedule');
+  city.applyRoads(year);
+  assert.equal(city.roadsBuilt[road], 1, name);
+}
+city.updateStreets();
+city.buildGraphs();
+const olympicModel = new CM.Model(city, { deferDemand: true });
+for (const id of ['sh_pvg_t3', 'sh_chongming_air']) {
+  const f = facility(id);
+  assert.equal(CM.Metro.checkSite(city, f.x, f.y, 'underground').ok, true, id + ' allows a terminal metro station');
+}
+olympicModel.setYear(2036 + 7 / 12);
+const olympicNodes = olympicModel.buildFacNodes();
+const olympicSites = ['stadium', 'aquatics', 'arena', 'village'].map(key => facility('sh_oly_' + key));
+const entranceStations = olympicSites.map(f => ({ x: f.entrance[0], y: f.entrance[1] }));
+const olympicAccess = olympicModel.computeAccess({ stations: entranceStations, serviced: [1, 1, 1, 1] });
+for (const [s, f] of olympicSites.entries()) {
+  const c = city.cellAt(f.entrance[0], f.entrance[1]), k = olympicNodes.ids.indexOf(f.id), z = olympicModel.Z + k;
+  assert.ok(city.landFrac[c] >= 0.5 && city.regionAt(...f.entrance).id.startsWith('wujing'), f.id + ' pedestrian entrance');
+  assert.ok(olympicNodes.ringFac.get(c).includes(k), f.id + ' access must go through the gate');
+  assert.ok(olympicNodes.cells[k].every(cell => !olympicNodes.cellFac.get(cell)?.includes(k)), f.id + ' no footprint shortcut');
+  assert.ok(olympicAccess.zl[z]?.some(entry => entry.s === s && entry.w >= olympicNodes.inner[k] / CFG.walk.mPerMin), f.id + ' has walk access from Longwu Road');
+}
+const olympicConnections = DATA.histTasks.find(t => t.id === 'sh14');
+const mojiang = DATA.simRoads.find(r => r.n === '墨江路').p;
+const mainAvenue = DATA.simRoads.find(r => r.n === '吴泾奥林匹克大道').p;
+const poolAvenue = DATA.simRoads.find(r => r.n === '北大道').p.slice(-2);
+const connector = DATA.simRoads.find(r => r.n === '吴泾奥运疏散联络路').p;
+const roadAngle = ([a, b]) => Math.atan2(b[1] - a[1], b[0] - a[0]) * 180 / Math.PI;
+assert.equal(mainAvenue.length, 2);
+assert.equal(connector.length, 2);
+assert.deepEqual(mainAvenue[0], mojiang.at(-1), 'Olympic Avenue starts at the existing junction');
+assert.deepEqual(mainAvenue[1], connector[0], 'The eastern end joins the dispersal street');
+assert.ok(Math.abs(roadAngle(mainAvenue) - roadAngle(mojiang.slice(-2))) < 1);
+assert.ok(Math.abs(roadAngle(connector) - roadAngle(mainAvenue) - 90) < 2);
+assert.ok(CM.U.distToSeg(...connector[1], ...poolAvenue[0], ...poolAvenue[1]) * CFG.CELL_M < 2);
+for (const [i, f] of olympicSites.slice(0, 3).entries()) {
+  assert.ok(Math.hypot(f.x - mainAvenue[0][0], f.y - mainAvenue[0][1]) * CFG.CELL_M < 650, f.id + ' is near Mojiang Road');
+  assert.ok(Math.hypot(f.x - f.entrance[0], f.y - f.entrance[1]) * CFG.CELL_M < 230, f.id + ' is close to its entrance');
+  const accessRoad = i === 1 ? poolAvenue : mainAvenue;
+  assert.ok(CM.U.distToSeg(...f.entrance, ...accessRoad[0], ...accessRoad[1]) * CFG.CELL_M < 2);
+  const lm = DATA.landmarks.find(l => l.id === f.id);
+  assert.ok(Math.abs(lm.rot - roadAngle(accessRoad)) < 1.5, f.id + ' follows its road alignment');
+  const angle = lm.rot * Math.PI / 180, cos = Math.cos(angle), sin = Math.sin(angle);
+  for (const dx of [-lm.w / 2, lm.w / 2]) for (const dy of [-lm.d / 2, lm.d / 2]) {
+    const x = lm.x + (dx * cos - dy * sin) / CFG.CELL_M;
+    const y = lm.y + (dx * sin + dy * cos) / CFG.CELL_M;
+    assert.ok(city.waterDistAt(x, y) > 0, f.id + ' footprint is on land');
+  }
+  const anchor = olympicConnections.anchors.find(a => a.facilityEntrance === f.id);
+  assert.deepEqual([anchor.x, anchor.y], Array.from(f.entrance), f.id + ' task targets the new gate');
+}
+const legacy = DATA.histTasks.find(t => t.id === 'sh-olympic-legacy'), village = olympicSites[3];
+const oldLegacy = { ...legacy, deadline: [2045, 12], anchors: [{ ...legacy.anchors[0], x: village.x, y: village.y }, ...legacy.anchors.slice(1)] };
+const restoredLegacy = CM.Tasks.restore({ active: [oldLegacy] }, { y: 2041, m: 1 }).active[0];
+assert.deepEqual(restoredLegacy.anchors[0], legacy.anchors[0]);
+assert.deepEqual(Array.from(restoredLegacy.deadline), [2041, 12]);
+assert.equal(oldLegacy.anchors[0].x, village.x, 'Original save data is unchanged');
+assert.deepEqual(CM.Tasks.restore({ active: [oldLegacy] }, { y: 2042, m: 1 }).active[0].deadline, [2045, 12]);
+assert.ok(!Fac.active(village, 2037, city));
+assert.ok(olympicSites.slice(0, 3).every(f => Fac.active(f, 2037, city)));
+const villageCell = city.cellAt(village.x, village.y);
+city.plan[villageCell] = CM.LU.IND;
+city.applyReplan(2037, true, 4);
+assert.equal(city.regionAt(village.x, village.y).plan, 'res');
+assert.equal(city.plan[villageCell], city.planFor(villageCell));
+assert.equal(DATA.mapLabels.find(l => l.name === '吴泾奥运村居住区').from, 2037);
+console.log('PASS Wujing venue access, Olympic and legacy roads, and restored task entrances');
+
+// Neither having street vertices beside the entrance nor having a legal site
+// beside the destination is enough if their parts of the walking graph are disconnected.
+const disconnectedWalk = Object.assign(Object.create(City.prototype), { W: 4, H: 1, VW: 5,
+  vx: [0, 1, 2, 3, 4], vy: [0, 0, 0, 0, 0], waterDistAt: () => 1 });
+disconnectedWalk.walk = { deg: [1, 1, 0, 1, 1], start: [0, 1, 2, 2, 3, 4],
+  to: [1, 0, 4, 3], len: [250, 250, 250, 250] };
+assert.equal(disconnectedWalk.walkCanReach([0.1, 0.1], [[3.9, 0.1]], 1125), false);
+disconnectedWalk.walk = { deg: [1, 2, 2, 2, 1], start: [0, 1, 3, 5, 7, 8],
+  to: [1, 0, 2, 1, 3, 2, 4, 3], len: Array(8).fill(250) };
+assert.equal(disconnectedWalk.walkCanReach([0.1, 0.1], [[3.9, 0.1]], 1125), true);
+assert.equal(disconnectedWalk.walkCanReach([0.1, 0.1], [[3.9, 0.1]], 700), false);
+
+const walkways = city.roadGroups.filter(g => g.walkOnly);
+assert.ok(walkways.some(g => g.year === 2015) && walkways.some(g => g.year === 2020),
+  'Existing walking streets follow the opening phases of both suburban belts');
+assert.ok(city.roadWays.some(w => w.walkSource !== undefined && city.roadsBuilt[w.g]));
+const newlyMapped = (u, v) => city.edgeBetween(u % city.VW, Math.floor(u / city.VW), v % city.VW, Math.floor(v / city.VW));
+let parkPaths = 0;
+for (let u = 0; u < city.V; u++) for (let q = city.walk.start[u]; q < city.walk.start[u + 1]; q++) {
+  const v = city.walk.to[q];
+  if (v <= u) continue;
+  const e = newlyMapped(u, v);
+  assert.notEqual(city.eBlock[e], 2, 'No pedestrian link crosses future reclamation');
+  if (city.eCls[e] || !city.eWalkRoad[e]) continue;
+  const c = city.cellAt((city.vx[u] + city.vx[v]) / 2, (city.vy[u] + city.vy[v]) / 2);
+  if (c >= 0 && city.lu[c] === CM.LU.PARK) parkPaths++;
+}
+assert.ok(parkPaths > 0, 'Documented footpaths serve parks without developed city blocks');
+assert.ok(CM.Tasks.facServable(city, songjiang) && CM.Tasks.facServable(city, yuanxiang));
+console.log('PASS public walking routes, opening phases, barriers and connected facility approaches');
+
+// Use station coordinates from the affected areas to test normal land use
+// without relying on a facility, a saved game, or a geographic snap marker.
+const stationSites = [{ x: 175.8886, y: 209.5286 }, { x: 248.6010, y: 212.2111 }, { x: 311.7538, y: 285.5951 }];
+const residential = [[173.5, 206.5], [245.5, 209.5], [314.5, 282.5]].map(p => city.cellAt(...p));
+const regularModel = new CM.Model(city, { deferDemand: true });
+const regularNetwork = { stations: stationSites, serviced: [1, 1, 1] };
+const withLocalPaths = regularModel.computeAccess(regularNetwork);
+const carsBefore = city.car;
+city.eArt.fill(0); city.eName.fill(0); city.eWalkRoad.fill(0); city.roadsBuilt.fill(0);
+city.roadGroups.forEach((g, k) => { if (g.walkOnly) city.roadsBuilt[k] = 1; });
+city.applyRoads(2037);
+city.updateStreets();
+city.buildGraphs();
+const withoutLocalPaths = regularModel.computeAccess(regularNetwork);
+assert.equal(city.car, carsBefore, 'The pedestrian update leaves motorized road access unchanged');
+const recovered = residential.filter(c => withLocalPaths.cellWalk[c] <= CFG.walk.maxAccessM && withoutLocalPaths.cellWalk[c] > CFG.walk.maxAccessM);
+assert.ok(recovered.length > 0 && recovered.some(c => city.pop[c] + city.jobs[c] > 0),
+  'Documented branch roads reconnect ordinary residents or jobs to the operating network');
+console.log('PASS regular neighbourhoods regain 15-minute station access');

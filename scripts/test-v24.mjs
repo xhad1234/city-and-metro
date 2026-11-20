@@ -52,21 +52,22 @@ g.econ.fare = {mode:'flat',flat:10};
 const tasks = new C.Tasks(), t = { id:'fare-gate-test',kind:'dyn',type:'zoneCong',metric:'carShare',zone:0,start:.8,target:.6,sustain:3,streak:0,samples:[],fare0:10,title:'Test',desc:'Goal',issuedAt:[2000,1],deadline:[2002,1],reward:0 };
 tasks.active = [t]; tasks.nextDyn = g.ym()+100; tasks.offerMonthly = () => [];
 g.tasks = tasks; g.model.zoneTraffic = () => ({carShare:.5}); g.model.trafficReady = () => true; g.model.trafficVerified = () => true;
-const plain = tasks.evaluate(t,g); assert.equal(plain.ok,true);
-g.econ.fare = {mode:'flat',flat:0};
-assert.equal(tasks.evaluate(t,g).cheap,true); assert.equal(tasks.evaluate(t,g).ok,false);
-tasks.monthly(g); assert.equal(t.samples.length,0); assert.equal(t.streak,0); assert.equal(tasks.done.length,0);
-assert.ok(!/NaN|Infinity/.test(t.progress.text),'No invalid empty-sample average in the UI');
-g.econ.fare = {mode:'flat',flat:10};
-for (let m = 2; m <= 4; m++) { g.clock.m = m; tasks.monthly(g); }
-assert.equal(tasks.done.some(x => x.id === t.id),true,'Three valid-price months may complete the congestion task');
+assert.equal(tasks.evaluate(t,g).ok,false);
+g.econ.setFare({mode:'flat',flat:5},g.clock.y,g.clock.m);
+tasks.monthly(g); assert.equal(t.samples.length,0);
+g.clock.m = 2; tasks.monthly(g); assert.equal(t.samples.length,0,'The first complete month has not ended');
+g.clock.m = 3; tasks.monthly(g); assert.equal(t.samples.length,1);
+g.econ.setFare({mode:'flat',flat:4},g.clock.y,g.clock.m);
+for (let m = 4; m <= 6; m++) { g.clock.m = m; tasks.monthly(g); }
+assert.equal(t.samples.length,2); assert.equal(tasks.done.length,0,'Changing fares restarts the window');
+g.clock.m = 7; tasks.monthly(g);
+assert.equal(tasks.done.some(x => x.id === t.id),true,'Three complete months at a lower fare can complete the task');
 assert.equal(C.Tasks.fareLevel({mode:'dist',flat:2,km0:4,step:2,inc:1,cap:4}),4);
-assert.equal(C.Tasks.fareCheap({type:'facShare',fare0:10}, {econ:{fare:{mode:'flat',flat:0}}}),true);
-assert.equal(C.Tasks.fareCheap({type:'ridership',fare0:10}, {econ:{fare:{mode:'flat',flat:0}}}),false);
-const legacy = {...t,id:'legacy-fare-gate',status:'active',samples:[],streak:0}; delete legacy.fare0; delete legacy.evaluatedYM;
-tasks.active = [legacy]; g.clock.m = 5; tasks.monthly(g); assert.equal(legacy.fare0,10);
+const legacy = {...t,id:'legacy-fare-gate',status:'active',samples:[],progress:{cheap:true},fareWait:2}; delete legacy.evaluatedYM;
+const migrated = C.Tasks.restore({active:[legacy]}).active[0];
+assert.equal(migrated.fare0,undefined); assert.equal(migrated.progress,undefined); assert.equal(migrated.fareWait,undefined);
 assert.equal(C.Tasks.netDist({compiled:{stations:[{x:0,y:0},{x:20,y:20}],serviced:[false,true]}},20,16),4);
-console.log('PASS task fare gating, finite empty averages, three valid months, old-task defaults and operating-station distance');
+console.log('PASS stable fares, restart on fare change, old-task transition and operating-station distance');
 
 // Keep one eligible candidate at a time so the generated objective itself,
 // rather than the implementation constants, is checked deterministically.
@@ -77,10 +78,10 @@ try {
   const fixture={clock:{y:2000,m:1},econ:{mode:'free',costIndex:()=>1,fare:{mode:'flat',flat:10}},city:{landFrac:[1],region:[0],regions:[{scenic:false}],cellLocked:()=>false},compiled:{stations:[{id:'edge',name:'线网端点',x:0,y:0,size:'M'}],serviced:[true]},model:{Z:0,net:{acc:null},daily:{metro:0,metroShare:.1},trafficReady:()=>true,facDaily:{},fn:{list:[facility]}},zoneCong:()=>1.5,zoneName:()=> '测试片区'};
   let generated=new C.Tasks().generate(fixture);
   assert.equal(generated.type,'connect'); assert.equal(generated.anchors.length,2); assert.equal(generated.anchors[1].name,'线网端点');
-  facility.x=10; generated=new C.Tasks().generate(fixture); assert.equal(generated.type,'facShare'); assert.equal(generated.target,.07); assert.equal(generated.fare0,10);
+  facility.x=10; generated=new C.Tasks().generate(fixture); assert.equal(generated.type,'facShare'); assert.equal(generated.target,.07); assert.equal(generated.fare0,undefined);
   facility.x=4; generated=new C.Tasks().generate(fixture); assert.equal(generated.target,.15);
   Object.assign(fixture.model,{Z:1,facDaily:null,fn:null,zPop:[5000],zJobs:[0],zCx:[4],zCy:[0],zoneCells:[[0]],zoneTraffic:()=>({carShare:.8,trips:1000}),zoneOpportunity:()=>100});
-  generated=new C.Tasks().generate(fixture); assert.equal(generated.type,'zoneCong'); assert.ok(generated.start-generated.target>=.008 && generated.start-generated.target<=.03); assert.equal(generated.fare0,10);
+  generated=new C.Tasks().generate(fixture); assert.equal(generated.type,'zoneCong'); assert.ok(generated.start-generated.target>=.008 && generated.start-generated.target<=.03); assert.equal(generated.fare0,undefined);
   fixture.model.zCx=[20]; assert.equal(new C.Tasks().generate(fixture),null,'Distant congestion targets should not be issued');
 } finally { C.Tasks.facServable=oldServable; C.Tasks.facShareOf=oldShare; C.Eras.goals=oldGoals; }
 console.log('PASS generated remote connections, medium/near facility goals and nearby congestion targets');

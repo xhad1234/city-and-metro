@@ -5,6 +5,14 @@
   const M = {};
   const STEP = 0.12;
 
+  // 地标用地与地铁施工权限分开。枢纽可保留站房，同时在其用地内设地铁站。
+  function constructionLandmark(city, c) {
+    const id = city.protectedId[c];
+    if (!id) return null;
+    const lm = D.landmarks[id - 1];
+    return lm && lm.kind !== 'campus' && !lm.allowMetro ? lm : null;
+  }
+
   M.empty = function () { return { stations: {}, segments: {}, lines: {}, nextId: 1 }; };
   M.clone = function (n) { return JSON.parse(JSON.stringify(n)); };
   M.newId = function (net, p) { return p + (net.nextId++); };
@@ -283,7 +291,8 @@
         if (airOk) { airC += ds; if (!airHit) airHit = [mx, my]; }
         else if (!locked.some(function (l) { return l.open === D.airport.closeYear; })) locked.push({ x: mx, y: my, name: (D.airport.name || '机场') + '（运营中）', open: D.airport.closeYear });
       }
-      if (city.protectedId[c] > 0 && D.landmarks[city.protectedId[c] - 1].kind !== 'campus') { protC += ds; protNames.add(D.landmarks[city.protectedId[c] - 1].name); if (!protHit) protHit = [mx, my]; }
+      const protectedLandmark = constructionLandmark(city, c);
+      if (protectedLandmark) { protC += ds; protNames.add(protectedLandmark.name); if (!protHit) protHit = [mx, my]; }
       // 历史城区与古建周围的地下保护范围（v2.6）：只能走地下，隧道更贵
       const hk = city.heritage ? city.heritage[c] : 0;
       if (hk) { if (hk === 2) guardC += ds; else herC += ds; if (!herHit) herHit = [mx, my, city.heritageName(c), hk]; }
@@ -640,13 +649,14 @@
   // 拆开线路时新线路沿用原线路的运行速度
   const keepSpeed = function (net, from, to) { const A = net.lines[from], B = net.lines[to]; if (A && B && A.speed) B.speed = A.speed; };
   // ---------------- 运行交路（v2.5 玩家反馈：快慢车、区间车） ----------------
-  // 每条线路默认有按顺序停靠所有站的全程交路（不存入 svcs，也不能删除）；line.svcs 记录玩家加开的交路：
+  // line.baseSvcs 按原线路终点（或 loop）保存基本交路的停站和区间；line.svcs 记录玩家加开的交路。
   // { id, name, from, to, via, skip }：from / to 为区间端点（缺省为线路端点），via 为支线方向上的一站，skip 为不停靠的车站。
   // 环线的交路只能跳站（首站固定停靠），不能折返。返回所在路线序号与停靠站在路线上的序号；车站已不在线路上时返回 null
-  M.svcStops = function (tp, sv) {
+  M.svcStops = function (tp, sv, routeIndex) {
     const skip = new Set(sv.skip || []);
-    for (let ri = 0; ri < tp.routes.length; ri++) {
-      const rt = tp.routes[ri], st = rt.st;
+    for (const [ri, rt] of tp.routes.entries()) {
+      if (routeIndex != null && routeIndex !== ri) continue;
+      const st = rt.st;
       if (sv.via && st.indexOf(sv.via) < 0) continue;
       if (rt.loop) {
         if (sv.from || sv.to) continue;
@@ -661,6 +671,15 @@
     }
     return null;
   };
+  function baseServiceFor(line, tp, rt, key) {
+    const entries = line.baseSvcs;
+    if (!entries) return null;
+    if (entries[key]) return key;
+    // 延长线路后，旧终点仍能唯一标识原来的运行方向。
+    return rt.loop ? null : Object.keys(entries).find(function (k) {
+      return rt.st.includes(k) && tp.routes.filter(function (r) { return r.st.includes(k); }).length === 1;
+    });
+  }
   M.svcLabel = function (line, sv) { return line.name + ' · ' + sv.name; };
   // 线路调整后清理已失效的交路（区间端点或方向站不再在本线上）；线路形态暂时无效时不动，等草案改好
   M.pruneServices = function (net) {
@@ -749,6 +768,24 @@
     return { station: sid, dist: d, co: co.length };
   };
   M.removeSegment = function (net, segId) { delete net.segments[segId]; return M.normalizeLines(net); };
+  // 一条普通线路缩短后，基本交路随新终点保存，沿途的跳站设定继续生效。
+  const trimBaseService = function (net, lid, oldKey, oldTopo, removed, neighbor) {
+    const line = net.lines[lid], edits = line.baseSvcs, prior = edits[oldKey], tp = M.lineTopo(net, lid);
+    if (tp.topo !== 'path') return;
+    const before = M.svcStops(oldTopo, prior, 0);
+    if (!before) return;
+    const stations = tp.routes[0].st, key = stations.at(-1), next = { ...prior };
+    const oldStops = oldTopo.routes[0].st;
+    const [a, b] = [oldStops[before.ia], oldStops[before.ib]].map(s => stations.indexOf(s === removed ? neighbor : s)).sort((x, y) => x - y);
+    delete next.from; delete next.to;
+    if (a > 0) next.from = stations[a];
+    if (b < stations.length - 1) next.to = stations[b];
+    if (next.via === removed) delete next.via;
+    if (next.skip) next.skip = next.skip.filter(s => s !== removed);
+    delete edits[oldKey];
+    if (!edits[key] && a >= 0 && a < b && M.svcStops(tp, next, 0)) edits[key] = next;
+    if (!Object.keys(edits).length) delete line.baseSvcs;
+  };
   const dropStation = function (net, sid, notes) {
     const st = net.stations[sid];
     const byLine = new Map();
@@ -759,6 +796,9 @@
     }
     for (const entry of byLine) {
       const lid = entry[0], segs = entry[1];
+      const line = net.lines[lid], before = segs.length === 1 && line?.baseSvcs && M.lineTopo(net, lid);
+      const base = before?.topo === 'path' && before.routes[0];
+      const editKey = base && baseServiceFor(line, before, base, base.st.at(-1));
       if (segs.length === 2) {
         const s1 = segs[0], s2 = segs[1];
         const o1 = s1.a === sid ? s1.b : s1.a, o2 = s2.a === sid ? s2.b : s2.a;
@@ -786,8 +826,8 @@
       } else {
         for (const s of segs) delete net.segments[s.id];
       }
-      const line = net.lines[lid];
       if (line && line.root === sid) line.root = null;
+      if (editKey) trimBaseService(net, lid, editKey, before, sid, segs[0].a === sid ? segs[0].b : segs[0].a);
     }
     delete net.stations[sid];
   };
@@ -955,7 +995,8 @@
     }
     // 地面铁路（v1.9）：地面车站不能压在运营中的铁路上；地下与高架车站可以
     if (type === 'surface' && city.railDist && city.railDist(x, y) < 0.3) return { ok: false, msg: '地面车站不能建在铁路上', how: '把车站移离铁路约 80 m 以上，或改为地下 / 高架车站。' };
-    if (city.protectedId[c] > 0 && D.landmarks[city.protectedId[c] - 1].kind !== 'campus' && city.inLandmarkSite(city.protectedId[c] - 1, x, y)) return { ok: false, msg: '受保护建筑「' + D.landmarks[city.protectedId[c] - 1].name + '」，不能设站或拆除', how: '把车站移到相邻街区，保护建筑周边仍可通过车站出入口服务。' };
+    const protectedLandmark = constructionLandmark(city, c);
+    if (protectedLandmark && city.inLandmarkSite(city.protectedId[c] - 1, x, y)) return { ok: false, msg: '受保护建筑「' + protectedLandmark.name + '」，不能设站或拆除', how: '把车站移到相邻街区，保护建筑周边仍可通过车站出入口服务。' };
     return { ok: true };
   };
 
@@ -992,7 +1033,7 @@
   };
   M.compile = function (net, city) { return M.withSegIndex([net], function () { return compile(net, city); }); };
   function compile(net, city) {
-    const C = { net: net, stations: [], sIndex: new Map(), segs: new Map(), lines: [], routes: [], topo: new Map() };
+    const C = { net: net, stations: [], sIndex: new Map(), segs: new Map(), lines: [], routes: [], topo: new Map(), serviceBases: new Map() };
     const ids = M.sortIds(Object.keys(net.stations));
     ids.forEach(function (id, k) { C.sIndex.set(id, k); C.stations.push(net.stations[id]); });
     for (const id in net.segments) {
@@ -1019,6 +1060,7 @@
       if (tp.topo === 'invalid' || tp.topo === 'empty') continue;
       if (tp.routes.some(function (rt) { return rt.segs.some(function (ref) { return !C.segs.has(ref.id); }); })) continue;
       const vk = M.lineKmh(line) / 80, grade = M.speedGrade(line), bases = [];   // 运行速度按建设方式的基准速度等比调整（未设定为 80 km/h，即基准速度）
+      C.serviceBases.set(lid, bases);
       tp.routes.forEach(function (rt, ri) {
         const pts = [], hs = [], stopDist = [0], stopPt = [0], legLenM = [], legSec = [], legSeg = [], legV = [];
         let minCars = 8, length = 0;
@@ -1055,7 +1097,16 @@
           stIds: rt.st, stIdx: stIdx, segRefs: legSeg, legSegs: legSeg.map(function (ref) { return [ref]; }), pts: pts, hs: hs, cum: cum, stopDist: stopDist, stopPt: stopPt, legLenM: legLenM, legSec: legSec, legV: legV,
           cars: minCars, cap: minCars * mc.carCap, runSec: runSec, cycleSec: cycleSec, lenM: cum[cum.length - 1] * CFG.CELL_M, kmh: grade.kmh, opsK: grade.ops,
         };
-        C.routes.push(route); bases.push(route);
+        route.baseKey = rt.loop ? 'loop' : rt.st[rt.st.length - 1];
+        route.baseEditKey = baseServiceFor(line, tp, rt, route.baseKey);
+        bases.push(route);
+        const custom = route.baseEditKey && line.baseSvcs[route.baseEditKey], plan = custom && M.svcStops(tp, custom, ri);
+        if (!plan || plan.stops.length === nStops) { C.routes.push(route); return; }
+        const service = M.patternRoute(C, line, route, custom, plan);
+        C.routes.push(Object.assign(service, {
+          id: route.id, label: route.label, branch: route.branch, main: route.main, baseKey: route.baseKey,
+          baseStops: rt.st,
+        }));
       });
       // 玩家加开的交路（快慢车、区间车）：编译为独立的运营路线，排在全程路线之后，各自配车、发车与计客流
       for (const sv of line.svcs || []) {
@@ -1088,15 +1139,14 @@
     return [dx / d, dy / d];
   };
   // 两条线在同一车站的线位关系：kind same 同台（走向夹角 < 25° 且站台同层）/ cross 节点（交叉）/ level 天地（站台不同层）；
-  // off 为各自站台多走的换乘通道（分钟），min 为估计的换乘步行时间（不含候车，界面显示用）
+  // walkMin 为站台到站台的估计步行分钟，供换乘图与车站概况共用。
   M.xferKind = function (C, si, la, lb) {
-    const st = C.stations[si], ta = M.platType(st, la), tb = M.platType(st, lb), mc = CFG.metro, ch = CFG.choice;
-    const base = ch.xferBase != null ? ch.xferBase : ch.transferPen, ww = ch.walkW;
-    if (ta !== tb) return { kind: 'level', label: '天地换乘', off: 0, min: base + ww * 2 * mc.levelXferMin, angle: null };
+    const st = C.stations[si], ta = M.platType(st, la), tb = M.platType(st, lb);
+    if (ta !== tb) return { kind: 'level', label: '天地换乘', walkMin: 2 * CFG.metro.levelXferMin, angle: null };
     const m = C.lineDir && C.lineDir[si], da = m && m.get(la), db = m && m.get(lb);
     const ang = da && db ? Math.acos(Math.min(1, Math.abs(da[0] * db[0] + da[1] * db[1]))) * 180 / Math.PI : 90;
-    if (ang < 25) return { kind: 'same', label: '同台换乘', off: 0, min: base, angle: ang };
-    return { kind: 'cross', label: ang > 65 ? '十字节点换乘' : '斜交节点换乘', off: XFER_OFF, min: base + ww * 2 * XFER_OFF, angle: ang };
+    if (ang < 25) return { kind: 'same', label: '同台换乘', walkMin: 0, angle: ang };
+    return { kind: 'cross', label: ang > 65 ? '十字节点换乘' : '斜交节点换乘', walkMin: 2 * XFER_OFF, angle: ang };
   };
 
   // ---------------- 草案差异、费用与冲突 ----------------
@@ -1844,7 +1894,7 @@
       const T = {
         outside: function (m) { return cell(m) < 0; },
         hill: function (m) { const k = cell(m); return k >= 0 && city.regions[city.region[k]].scenic && !city.cellLocked(k); },
-        protected: function (m) { const k = cell(m); return k >= 0 && city.protectedId[k] > 0 && D.landmarks[city.protectedId[k] - 1].kind !== 'campus'; },
+        protected: function (m) { const k = cell(m); return k >= 0 && !!constructionLandmark(city, k); },
         locked: function (m) { const k = cell(m); return k >= 0 && city.cellLocked(k); },
         airport: function (m) { const k = cell(m); return k >= 0 && city.lu[k] === LU.AIRPORT; },
         rail: function (m) { return (g.railSurf || []).some(function (p) { return U.dist(p[0], p[1], m[0], m[1]) < 0.18; }); },

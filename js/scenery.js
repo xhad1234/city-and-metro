@@ -143,6 +143,7 @@
   const FAC_KIND = { hosp: ['hospital', 150, 110, 34], uni: ['campus', 460, 340, 20], shop: ['mall', 190, 140, 28], cbd: ['cluster', 190, 150, 140],
     park: ['garden', 230, 190, 8], stadium: ['stadium', 230, 190, 28], venue: ['expo', 380, 260, 22], scenic: ['temple', 140, 160, 14] };
   Renderer.prototype.facModelSpec = function (f) {
+    if (f.model) return f.model;
     const pa = this.game.mapId === 'pa' && !f.gen, n = f.name;   // 巴黎老城的医院、百货为石砌庭院建筑；郊区片区生成的设施为现代建筑
     let s = FAC_KIND[f.t].slice(), style = null;
     if (f.t === 'scenic') {
@@ -170,7 +171,20 @@
       return out;
     };
     this._facFoot = foot;
+    const mapped = function (id, name, layout) {
+      const prev = old && old.get(id);
+      if (prev && prev.lm.parts === layout.parts) return prev;
+      return { id: 'f' + id, fac: id, x: layout.x, y: layout.y,
+        lm: { ...layout, kind: 'measuredFacility', id: 'fac_' + id, name } };
+    };
+    for (const layout of D.legacyFacilityLayouts || []) {
+      if (yr >= layout.from) out.push(mapped(layout.id, layout.name, layout));
+    }
     for (const f of Fac.list(city)) {
+      if (f.layout && Fac.active(f, yr, city)) {
+        out.push(mapped(f.id, f.name, f.layout));
+        continue;
+      }
       if (f.lmK >= 0 || f.ext || f.noModel || !FAC_KIND[f.t] || !Fac.active(f, yr, city)) continue;
       const c0 = city.cellAt(f.x, f.y), inScenic = c0 >= 0 && !!city.regions[city.region[c0]].scenic;
       // 附近已有地标代表这个设施（片区类按片区半径，点状设施只看是否重叠）
@@ -222,7 +236,13 @@
     if (st && st.city === city && st.airKey !== airKey) for (const h of airs.concat(st.airs)) { const s = Math.max(h.lm.w, h.lm.d); for (const c of this._facFoot(h.x, h.y, s, s)) city.dirty.add(c); }   // 机场平面画在地面块里
     for (const it of list) {
       byId.set(it.fac, it);
-      for (const c of this._facFoot(it.x, it.y, it.lm.w, it.lm.d)) cells.add(c);
+      if (it.lm.kind === 'measuredFacility') {
+        for (const part of it.lm.parts) {
+          const xs = part.rings[0].map(p => p[0]), ys = part.rings[0].map(p => p[1]);
+          const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+          for (const c of this._facFoot((x0 + x1) / 2, (y0 + y1) / 2, (x1 - x0) * CFG.CELL_M, (y1 - y0) * CFG.CELL_M)) cells.add(c);
+        }
+      } else for (const c of this._facFoot(it.x, it.y, it.lm.w, it.lm.d)) cells.add(c);
     }
     for (const field of (D.airportLayout && D.airportLayout.fields) || []) if (yr >= field.from) {
       for (const c of field.cells) cells.add(c);
@@ -287,6 +307,7 @@
     this._facilitySprites = new Map(); this._facilityPx = 0;
   };
   R.drawFacilitySprite = function (ctx, lm, lvl, alpha) {
+    if (lm.kind === 'measuredFacility' && !lm.parts.length) return;
     const a = this.P(lm.x, lm.y, 0), radius = Math.hypot(lm.w, lm.d) / CFG.CELL_M * this.z;
     if (a.x + radius < 0 || a.x - radius > this.w || a.y + radius < 0 || a.y - radius > this.h + Math.max(100, lm.h * this.z * .012)) return;
     const store = this._facilitySprites || (this._facilitySprites = new Map());

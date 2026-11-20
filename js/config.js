@@ -85,7 +85,8 @@
     },
     bike: {
       speedRatio: 3,         // 相对步行速度，共用可通行的地面街道
-      transferMin: 5,        // 每段骑行接驳计入取车/停车与进出站时间
+      startMin: 2,           // 每段骑行接驳的准备时间，计入实际用时
+      transferPenalty: 4,   // 骑行与地铁换乘的广义成本（等效分钟）
       maxRideMin: 15,
     },
 

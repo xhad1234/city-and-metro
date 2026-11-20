@@ -59,6 +59,7 @@ assert.equal(F.buy(g,null,null,fast.id,8,1).ok,true);assert.equal(F.buy(g,null,n
 const fleetBefore=JSON.stringify(g.fleet.trains),plan=F.allocPlan(g);assert.equal(JSON.stringify(g.fleet.trains),fleetBefore);assert.equal(plan.moved,2);assert.equal(plan.left,2);
 assert.deepEqual(Array.from(plan.needs.flatMap(x=>x.ids)).sort(),compatible.sort());
 const cash=g.econ.funds;assert.equal(F.applyAlloc(g,plan),2);assert.equal(g.econ.funds,cash);
+g.model.solveNow(2);assert.ok(g.model.trafficReady());
 const order=F.allocPlan(g),fill=F.fillCost(g,order);assert.ok(fill.cost>0);const preview=fill.cost;
 g.clock.m++;assert.equal(F.confirmAlloc(g,order,fill).stale,true);g.clock.m--;
 const capex=g.econ.capex,beforeOrder=JSON.stringify(g.fleet.trains);g.econ.capex=0;g.econ.funds=0;
@@ -69,6 +70,118 @@ assert.ok(Math.abs(cash-g.econ.funds-preview)<1e-5);assert.equal(F.allocPlan(g).
 F.setMode(g,line,'manual');assert.equal(F.allocPlan(g).needs.length,0);F.setMode(g,line,'auto');
 g.fleet.autoAlloc=true;const fleetRoundTrip=C.Game.restore(copy(g.serialize()));assert.equal(fleetRoundTrip.fleet.autoAlloc,true);assert.equal(fleetRoundTrip.econ.funds,g.econ.funds);
 console.log('PASS idle allocation, platform/speed/manual exclusions, previewed purchase cost and saved fleet preference');
+
+{
+  const routes = [80, 100, 80, 80, 80].map((kmh, i) => ({ lineId: 'l' + (i + 1), baseKey: 's' + i, label: 'route ' + i,
+    loop: false, kmh, cars: i === 3 ? 8 : i === 4 ? 6 : 4, cap: 1600, cycleSec: 3600, lenM: 2000, stIds: ['s1', 's2'], stIdx: [0, 1] }));
+  const lines = Object.fromEntries(routes.map(r => [r.lineId, {}])), compiled = { routes };
+  const net = { C: compiled, R: routes.length, rideEdge: routes.map(() => []) };
+  const period = values => ({ freq: new Float32Array(values.length), needDir: Float32Array.from(values.flatMap(n => [n, n])) });
+  const wd = { per: [period([1, 1, 1, 1, 1])] }, we = { per: [period([1, 1, 1, 2, 1])] };
+  let ready = false, settled = false, mutations = 0;
+  const train = (id, model, cars, i) => ({ id, model, cars, line: i == null ? null : routes[i].lineId, svc: i == null ? null : routes[i].baseKey });
+  const spare = () => train('reserve', 'gen-auto', 6, 3);
+  const stock = [train('fast', 'gen-auto', 4), train('slow', slow.id, 4), train('extra-short', slow.id, 4, 3),
+    train('extra-long', slow.id, 6, 3), train('keep-a', 'gen-auto', 6, 3), train('keep-b', 'gen-auto', 6, 3), spare(), train('manual', 'gen-auto', 6, 4)];
+  const game = { compiled, net: { lines }, clock: { y: 2010, m: 7 }, ym() { return 2010 * 12 + this.clock.m - 1; },
+    fleet: { trains: stock, ops: { l5: { mode: 'manual', n: {} } }, autoAlloc: true, ver: 0 },
+    model: { net, resultsFor: dt => dt === 'we' ? we : wd, trafficReady: () => ready, get settled() { return settled; }, applyFleet: () => mutations++ },
+    logEvent() {}, touch() {}, emit() {} };
+  game.fleet.autoAllocYm = game.ym();  // Export from before the allocator tracked fleet versions.
+  assert.equal(F.autoAllocate(game), 0);
+  const unsettled = F.allocPlan(game);
+  assert.equal(F.applyAlloc(game, unsettled), 0);
+  assert.equal(F.confirmAlloc(game, unsettled, null).stale, true);
+  ready = true;
+  assert.equal(F.autoAllocate(game), 0, 'Published interim results do not consume the allocation revision');
+  settled = true;
+  assert.equal(F.confirmAlloc(game, unsettled, null).stale, true, 'A preview built without current weekend results expires on completion');
+  const proposal = F.allocPlan(game);
+  assert.equal(proposal.unmet, 0, 'A train returning to the depot fills the gap in the same round');
+  assert.equal(proposal.moved, 3);
+  assert.equal(proposal.reused, 1);
+  assert.equal(proposal.returnedByLine.get('l4'), 2);
+  assert.equal(F.fillCost(game, proposal).rows.length, 0);
+  assert.equal(F.autoAllocate(game), 4, 'Reuses an idle train after returning it and counts each affected train once');
+  assert.equal(stock.find(t => t.id === 'fast').line, 'l2', 'Reserves the only fast train for the fast route');
+  assert.equal(stock.find(t => t.id === 'extra-long').line, null);
+  assert.equal(stock.find(t => t.id === 'extra-short').line, 'l3');
+  assert.equal(stock.filter(t => t.line === 'l4').length, 3, 'Keeps the busier weekend requirement and one spare');
+  assert.equal(stock.find(t => t.id === 'manual').line, 'l5');
+  assert.equal(F.autoAllocate(game), 0);
+  assert.equal(mutations, 1);
+  assert.equal(stock.length, 8);
+  assert.equal(game.fleet.autoAllocVer, game.fleet.ver);
+
+  const beforeEdit = F.allocPlan(game);
+  stock.push(train('late-extra', 'gen-auto', 6, 3));
+  game.fleet.ver++;   // A stopping-pattern edit also bumps this revision.
+  ready = false;
+  assert.equal(F.confirmAlloc(game, beforeEdit, null).stale, true);
+  assert.equal(F.autoAllocate(game), 0, 'An edit made within the month waits for recalculation');
+  assert.equal(stock.find(t => t.id === 'late-extra').line, 'l4');
+  ready = true;
+  assert.equal(F.autoAllocate(game), 1, 'A same-month change can trigger a second allocation');
+  assert.equal(stock.filter(t => t.line === 'l4').length, 3);
+  assert.equal(F.autoAllocate(game), 0, 'A completed allocation consumes its own revision');
+  assert.equal(mutations, 2);
+
+  const planFor = trains => {
+    game.fleet.trains = trains;
+    game.fleet.ver++;
+    return F.allocPlan(game);
+  };
+  const returnsFor = trains => Array.from(planFor(trains).returned);
+  assert.deepEqual(returnsFor([train('long-old', 'gen-early', 6, 3), train('short-new', 'gen-auto', 4, 3),
+    train('long-new', 'gen-auto', 6, 3), spare()]), ['short-new'], 'Shorter trains take priority even over older longer trains');
+  assert.deepEqual(returnsFor([train('old-model', 'gen-a', 6, 3), train('new-model', 'gen-eco', 6, 3),
+    train('large-model', 'gen-auto', 6, 3), spare()]), ['old-model'], 'Model introduction year breaks a tie in train length');
+  assert.deepEqual(returnsFor([{ ...train('new-unit', 'gen-a', 6, 3), bought: 24100 },
+    { ...train('old-unit', 'gen-a', 6, 3), bought: 24000 }, train('third-unit', 'gen-auto', 6, 3), spare()]), ['old-unit']);
+  assert.deepEqual(returnsFor([train('high-cap-short', 'gen-auto', 4, 3), train('low-cap-long-a', 'gen-early', 6, 3),
+    train('low-cap-long-b', 'gen-early', 6, 3), train('low-cap-long-c', 'gen-early', 6, 3)]), ['low-cap-long-a'], 'The return order preserves the capacity needed by the remaining trains');
+
+  const serving = train('serving', 'gen-a', 6, 3), tooShort = train('same-model-short', 'gen-a', 4);
+  const typeMatch = planFor([serving, tooShort, train('same-model-long', 'gen-a', 6), train('more-capacity', 'gen-auto', 6)]);
+  assert.deepEqual(Array.from(typeMatch.needs.find(n => n.lid === 'l4').ids), ['same-model-long'], 'A matching model beats a higher-capacity substitute');
+  const sameFormation = planFor([serving, train('same-six', 'gen-a', 6), train('same-eight', 'gen-a', 8)]);
+  assert.deepEqual(Array.from(sameFormation.needs.find(n => n.lid === 'l4').ids), ['same-six'], 'A matching formation beats a longer train of the same model');
+  const longerFallback = planFor([serving, train('same-eight', 'gen-a', 8), train('other-six', 'gen-auto', 6)]);
+  assert.deepEqual(Array.from(longerFallback.needs.find(n => n.lid === 'l4').ids), ['same-eight'], 'A longer train of the same model fills the gap once the matching formation runs out');
+  const fallback = planFor([serving, tooShort, train('compatible-substitute', 'gen-auto', 6)]);
+  assert.deepEqual(Array.from(fallback.needs.find(n => n.lid === 'l4').ids), ['compatible-substitute'], 'A shorter matching model is ineligible');
+  const purchase = planFor([serving, tooShort]);
+  const quote = F.fillCost({ ...game, mapId: 'gz', econ: { costIndex: () => 1 } }, purchase);
+  assert.equal(quote.rows.find(row => row.x.lid === 'l4').cars, 6);
+  assert.equal(quote.rows.find(row => row.x.lid === 'l4').m.id, 'gen-a');
+
+  we.per = [period([1, 1, 1, 3, 1])];
+  const mixed = planFor([serving, train('running-eight', 'ld-59', 8, 3),
+    train('matching-six', 'gen-a', 6), train('matching-eight', 'ld-59', 8)]);
+  assert.deepEqual(Array.from(mixed.needs.find(n => n.lid === 'l4').ids), ['matching-eight'], 'A mixed roster prefers the longer of two exact matches even with a lower capacity');
+  we.per = [period([1, 1, 1, 20, 1])];
+  const many = Array.from({ length: 24 }, (_, i) => train('train-' + i, 'gen-a', 6, 3));
+  assert.equal(returnsFor(many).length, 2, 'Twenty working trains require two idle spares on the route');
+  const shortOnStock = planFor(many.slice(0, 19)).needs.find(n => n.lid === 'l4');
+  assert.equal(shortOnStock.short, 1, 'The reserve does not enlarge the replenishment target');
+  we.per = [period([1, 1, 1, 2, 1])];
+
+  routes[2].lineId = 'l4';
+  const crossBranch = planFor([serving, tooShort]);
+  const branchNeed = crossBranch.needs.find(n => n.svc === routes[2].baseKey);
+  assert.equal(branchNeed.minCars, 6, 'The line-wide minimum protects an empty branch');
+  assert.equal(branchNeed.ids.length, 0);
+  assert.equal(F.fillCost({ ...game, mapId: 'gz', econ: { costIndex: () => 1 } }, crossBranch).unavailable, true);
+
+  routes[2].cars = 6;
+  const afterReturns = planFor([serving, train('second-long', 'gen-a', 6, 3), train('third-long', 'gen-a', 6, 3), train('short-surplus', 'gen-a', 4, 3)]);
+  assert.deepEqual(Array.from(afterReturns.returned), ['short-surplus']);
+  const afterReturnsBranch = afterReturns.needs.find(n => n.svc === routes[2].baseKey);
+  assert.equal(afterReturnsBranch.minCars, 6);
+  assert.equal(afterReturnsBranch.ids.length, 0, 'The minimum is checked against the stock remaining after returns');
+  assert.equal(afterReturns.reused, 1, 'The shorter train remains available for another compatible line');
+}
+console.log('PASS same-round reuse, return priority, matching formations, mixed-fleet priority and peak reserve');
 
 // v2.5.0 originals get an exact backup; historical fare, accounts, assets and task data survive the upgrade.
 const old=copy(g.serialize());old.rulesRevision=6;delete old.econ.fareMark;delete old.econ.fareAuto;delete old.econ.fareNote;delete old.fleet.autoAlloc;

@@ -4,11 +4,13 @@ Pass the original geo_sh.js, OSMCoastline's simplified_land_polygons.shp,
 and Geofabrik extracts for Shanghai, Jiangsu and Zhejiang, in that order.
 Shanghai district relation /full .osm files can follow the PBF extracts
 when their boundaries are incomplete in the regional extract.
+Use --walk-only with the expanded geo_sh.js and OSM extracts to refresh pedestrian access.
 Requires Node.js and the Python packages osmium, shapely, pyshp and
 opencc-python-reimplemented. Writes the generated JavaScript to stdout.
 """
 import json
 import math
+import re
 import subprocess
 import sys
 
@@ -16,7 +18,7 @@ import numpy as np
 import osmium
 import shapefile
 from opencc import OpenCC
-from shapely import make_valid, transform, union_all
+from shapely import make_valid, prepare, transform, union_all
 from shapely.geometry import LineString, Point, Polygon, box, shape
 from shapely.ops import polygonize
 from shapely.strtree import STRtree
@@ -30,6 +32,8 @@ EXTRA_TOWN = None
 DISTRICTS = set('黄浦区 徐汇区 长宁区 静安区 普陀区 虹口区 杨浦区 闵行区 宝山区 嘉定区 浦东新区 金山区 松江区 青浦区 奉贤区 崇明区'.split())
 ROAD_CLASS = {'motorway': 4, 'trunk': 4, 'primary': 3, 'secondary': 2, 'tertiary': 2}
 STREETS = {'unclassified', 'residential', 'living_street', 'service', 'cycleway'}
+WALK_WAYS = STREETS | {'secondary', 'tertiary', 'footway', 'pedestrian', 'path'}
+PUBLIC_ACCESS = {'yes', 'designated', 'permissive', 'official'}
 CONVERTER = OpenCC('t2s')
 
 
@@ -59,7 +63,7 @@ def encode(coords):
     return ''.join(output)
 
 
-def decode(encoded):
+def decode(encoded, dx=DX, dy=DY):
     x = y = 0
     count = shift = value = 0
     for char in encoded:
@@ -73,7 +77,7 @@ def decode(encoded):
             x += delta
         else:
             y += delta
-            yield x / 64 + DX, y / 64 + DY
+            yield x / 64 + dx, y / 64 + dy
         count += 1
         shift = value = 0
 
@@ -358,7 +362,91 @@ def render(out):
     print('  };\n})(window.CM);')
 
 
+def render_walkways(geo_file, files):
+    """Build public ground access without changing the rest of the map."""
+    geometry = json.loads(subprocess.check_output(['node', '-e',
+        'global.window={CM:{}};require(require("path").resolve(process.argv[1]));'
+        'const g=window.CM.GEOS.sh;process.stdout.write(JSON.stringify({proj:g.proj,admin:g.admin,names:g.names}))', geo_file]))
+    projection = geometry['proj']
+    bounds = []
+    for level, name_id, *rings in geometry['admin']:
+        if level != 6 and geometry['names'][name_id] != '花桥镇':
+            continue
+        shells = []
+        for ring in rings:
+            coords = list(decode(ring[1:], 0, 0))
+            if ring[0] == 'o':
+                shells.append((coords, []))
+            elif shells:
+                shells[-1][1].append(coords)
+        bounds.extend(make_valid(Polygon(shell, holes)) for shell, holes in shells)
+    scope = union_all(bounds).intersection(FRAME)
+    prepare(scope)
+    names, names_index, roads = [''], {'': 0}, []
+
+    class Walkways(osmium.SimpleHandler):
+        def __init__(self):
+            super().__init__()
+            self.seen = set()
+
+        def way(self, way):
+            t = way.tags
+            highway = t.get('highway', '')
+            if way.id in self.seen or highway not in WALK_WAYS or t.get('indoor') in ('yes', 'corridor') or t.get('area') == 'yes':
+                return
+            foot = t.get('foot', '')
+            if foot and foot not in PUBLIC_ACCESS:
+                return
+            public = foot in PUBLIC_ACCESS
+            access = t.get('access', '')
+            if not public and ((access and access not in PUBLIC_ACCESS) or t.get('motorroad') == 'yes'):
+                return
+            if not public and highway == 'service' and t.get('service') in ('driveway', 'parking_aisle', 'drive-through', 'emergency_access'):
+                return
+            try:
+                coords = [((n.lon - projection['lon0']) * projection['kx'],
+                           (projection['lat0'] - n.lat) * projection['ky']) for n in way.nodes]
+            except osmium.InvalidLocationError:
+                return
+            if len(coords) < 2 or not any(in_frame(*p, margin=8) for p in coords):
+                return
+            self.seen.add(way.id)
+            name = source_name(t)
+            if name not in names_index:
+                names_index[name] = len(names)
+                names.append(name)
+            year = 0
+            date = re.fullmatch(r'(19\d{2}|20\d{2})(?:-(0[1-9]|1[0-2])(?:-\d{2})?)?', t.get('start_date', ''))
+            if date:
+                year = int(date[1]) + (int(date[2] or 1) - 1) / 12
+            flags = int(t.get('bridge', 'no') != 'no') | (2 if t.get('tunnel', 'no') != 'no' else 0)
+            line = LineString(coords)
+            if not scope.intersects(line):
+                return
+            if not scope.covers(line):
+                line = line.intersection(scope)
+            for piece in parts(line.simplify(0.035), 'LineString'):
+                if piece.length >= 0.08:
+                    roads.append([names_index[name], flags, year, encode(piece.coords)])
+
+    extract = Walkways()
+    for file in files:
+        extract.apply_file(file, locations=True)
+    print("'use strict';")
+    print('// Shanghai walking routes from OpenStreetMap contributors (ODbL).')
+    print('(function (CM) { CM.SH_WALKWAYS = {')
+    print('  names: ' + json.dumps(names, ensure_ascii=False, separators=(',', ':')) + ',')
+    print('  ways: [')
+    for road in roads:
+        print('    ' + json.dumps(road, separators=(',', ':')) + ',')
+    print('  ],\n}; })(window.CM);')
+    print('Walkway pieces:', len(roads), file=sys.stderr)
+
+
 if __name__ == '__main__':
+    if len(sys.argv) >= 4 and sys.argv[1] == '--walk-only':
+        render_walkways(sys.argv[2], sys.argv[3:])
+        sys.exit(0)
     if len(sys.argv) < 6:
         sys.exit(__doc__)
     base = subprocess.check_output(['node', '-e',

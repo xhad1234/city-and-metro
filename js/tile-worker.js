@@ -14,6 +14,7 @@ self.matchMedia = function () { return {matches:false}; };
   let R = null, city = null, game = null, LK = null, reclaim = [];
   const initMap = function (m) {
     if (m.geoFile) importScripts(m.geoFile);
+    if (m.geoId === 'sh' && !CM.SH_WALKWAYS) importScripts('data_sh_walkways.js');
     CM.mapId = m.geoId;
     CM.GEO = m.geoFile ? CM.GEOS[m.geoId] : m.geo;
     for (const k of Object.keys(CM.DATA)) delete CM.DATA[k];
@@ -38,7 +39,8 @@ self.matchMedia = function () { return {matches:false}; };
       const q = m.roads, groups = [], ways = [];
       for (let i = 0; i < q.cls.length; i++) groups.push({ cls: q.cls[i], flags: q.flags[i] });
       for (let i = 0; i < q.wayRoad.length; i++) {
-        const k = q.wayRoad[i], rd = k >= 0 ? Geo.roads[k] : null, p = rd ? rd.p : q.extra[-1 - k];
+        const k = q.wayRoad[i], rd = k >= 0 ? Geo.roads[k] : null;
+        const p = rd ? rd.p : k < 0 ? q.extra[-1 - k] : Geo.dec(CM.SH_WALKWAYS.ways[k - Geo.roads.length][3]);
         ways.push({ g: q.wayGroup[i], p: p, bbox: rd ? rd.bbox : Geo.bbox(p) });
       }
       city.roadGroups = groups; city.roadWays = ways; city.roadWayBk = Geo.buckets(ways, 4, city.W, city.H);

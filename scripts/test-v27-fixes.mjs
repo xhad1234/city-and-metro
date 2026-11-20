@@ -13,7 +13,12 @@ for(let y=5;y<g.city.H-5&&!fixture;y++)for(let x=5;x<g.city.W-22&&!fixture;x++){
  if(!M.evaluate(n,g.net,g.city,g.clock.y).conflicts.length)fixture={n,lid,ids};
 }
 assert.ok(fixture);g.edit(n=>Object.assign(n,fixture.n));assert.equal(g.confirmDraft().ok,true);g.model.solveNow(4);F.ensure(g);const{lid,ids}=fixture;
-assert.ok(g.model.daily.metro>0);const svc=F.svcId(g.compiled.routes[0],0);F.setMode(g,lid,'manual');for(let p=0;p<4;p++)F.setManual(g,lid,svc,p,0);g.model.solveNow(4);
+assert.ok(g.model.daily.metro>0);
+const dailyByStation=g.model.lineStationDaily(lid), rows=Array.from(dailyByStation.values());
+assert.equal(rows.length,ids.length);
+assert.ok(rows.every(r => r[2] === 0 && r[3] === 0));
+for (const column of [0,1]) assert.ok(Math.abs(sum(rows.map(r=>r[column])) / g.model.daily.metro - 1)<1e-5);
+const svc=F.svcId(g.compiled.routes[0],0);F.setMode(g,lid,'manual');for(let p=0;p<4;p++)F.setManual(g,lid,svc,p,0);g.model.solveNow(4);
 assert.equal(g.model.daily.metro,0);
 assert.equal(g.tasks.evaluate({type:'stationCrowd',station:ids[0],start:1.1,target:.9},g).ok,false);
 const liveRoute=g.compiled.routes[0],oldEnd=liveRoute.stIds.at(-1),terminal=g.net.stations[oldEnd];
@@ -47,7 +52,9 @@ console.log('PASS no-train and per-period shutdown, restored service, zero resid
  const compiled=M.compile(net,g.city),i=compiled.sIndex.get(exchange);
  const same=M.xferKind(compiled,i,a,b),cross=M.xferKind(compiled,i,a,c),level=M.xferKind(compiled,i,a,d);
  assert.equal(same.kind,'same');assert.equal(cross.kind,'cross');assert.equal(level.kind,'level');
- assert.ok(same.min<cross.min&&cross.min<level.min);
+ assert.equal(same.walkMin,0);
+ assert.equal(cross.walkMin,1);
+ assert.equal(level.walkMin,2*C.CFG.metro.levelXferMin);
  const model=new C.Model(g.city);model.setYear(2000);model.setNetwork(compiled);model.syncSolve=true;
  const measure=()=>{
    const period=model.makePer(model.net);
@@ -55,21 +62,113 @@ console.log('PASS no-train and per-period shutdown, restored service, zero resid
    const buf={};
    for(const _ of model.iterate(model.net,period,0,{noSmooth:true,buf})) {}
    const k=model.fn.ids.indexOf(terminal.id);
-   return {metro:period.fInM[k]+period.fOutM[k],skim:buf.skim};
+   return {metro:period.fInM[k]+period.fOutM[k],skim:buf.skim,flows:period.lineStationFlow, trips:period.stats.metro};
  };
  const enabled=measure(),choice=C.CFG.choice,bias=choice.hubAsc,feed=choice.hubFeed;
+ const accessTable=model.net.acc.zl;
+ let unpenalizedTrips;
+ try {
+   model.net.acc.zl=accessTable.map(entries=>entries?.map(entry=>entry.bikeShare
+     ? {...entry,cost:choice.walkW*entry.w} : entry));
+   unpenalizedTrips=measure().trips;
+ } finally { model.net.acc.zl=accessTable; }
+ assert.ok(unpenalizedTrips>enabled.trips,'Cycling transfer cost affects passenger choice at the same elapsed time');
  let disabled;
  try { choice.hubAsc=0;choice.hubFeed=null;disabled=measure(); }
  finally { choice.hubAsc=bias;choice.hubFeed=feed; }
  assert.ok(enabled.metro>disabled.metro,'The rail terminal should attract more riders with hub access enabled');
+ const totals=[0,0,0,0];enabled.flows.forEach((v,j)=>{totals[j%4]+=v;});
+ for(const total of totals.slice(0,2))assert.ok(Math.abs(total/enabled.trips-1)<1e-5);
+ assert.ok(totals[2]>0 && Math.abs(totals[2]/totals[3]-1)<1e-5,'Every cross-line transfer enters and leaves one line');
  assert.ok(model.net.acc.zFeedS.some((s,z)=>s>=0&&model.net.acc.zCov[z]<1));
  assert.ok(model.net.exits[i]>=compiled.stations.length);
  const n=model.net.N,from=compiled.sIndex.get(hub);
  for(const id of [exchange,south,east,west]) {
    assert.ok(enabled.skim.km[from*n+compiled.sIndex.get(id)]>0);
  }
+ const select=id=>({x:net.stations[id].x,y:net.stations[id].y,station:id});
+ model.ctxs.wd.per.forEach((P,p)=>{P.freq.fill([12,6,18,0][p]);P.freqDir.fill([12,6,18,0][p]);});
+ const stopTimes=model.tripTime(select(hub),select(west));
+ assert.equal(stopTimes.status,'ready');
+ assert.equal(stopTimes.periods[3],null);
+ const morning=stopTimes.periods[0], interchange=morning.sections.find(s=>s.kind==='transfer');
+ assert.deepEqual(Array.from(morning.sections,s=>s.kind),['access','wait','ride','transfer','ride','egress']);
+ assert.equal(interchange.from,i);assert.equal(interchange.to,i);
+ for(const [destination,relation] of [[south,same],[east,cross],[west,level]]){
+   const transfer=model.tripTime(select(hub),select(destination)).periods[0].sections.find(s=>s.kind==='transfer');
+   assert.equal(transfer.walk,relation.walkMin);
+   assert.equal(transfer.minutes,relation.walkMin+transfer.wait);
+ }
+ assert.equal(interchange.wait,2.5);
+ assert.equal(interchange.metres,interchange.walk*C.CFG.walk.mPerMin);
+ assert.equal(interchange.estimatedDistance,true);
+ assert.equal(morning.sections[1].metres,0);
+ assert.equal(morning.sections.at(-1).minutes,0);
+ assert.equal(morning.sections.at(-1).metres,0);
+ assert.ok(Math.abs(sum(morning.sections.map(s=>s.minutes))-morning.total)<1e-6);
+ assert.equal(sum(morning.sections.map(s=>s.metres)),morning.metres);
+ for(const leg of morning.sections.filter(s=>s.kind==='ride'))assert.equal(leg.metres,compiled.routes[leg.r].legLenM[leg.first]);
+ assert.ok(Math.abs(stopTimes.periods[1].total-morning.total-5)<1e-6);
+ assert.ok(stopTimes.periods[2].total<morning.total);
+ assert.equal(model.tripTime(select(hub),select(hub)).status,'same');
+ assert.equal(model.tripTime({x:-1,y:-1},select(west)).status,'start');
+ const nearby={x:net.stations[hub].x-0.4,y:net.stations[hub].y};
+ assert.ok(model.tripAccess(nearby).some(a=>a.s===from&&a.minutes>0&&a.mode==='walk'));
+ const destination={x:net.stations[east].x-0.4,y:net.stations[east].y};
+ const approaches=model.tripTime(nearby,destination).periods[0].sections;
+ assert.equal(approaches[0].mode,'walk');
+ assert.deepEqual(Array.from(approaches[0].paths[0][0]),[nearby.x,nearby.y]);
+ assert.deepEqual(Array.from(approaches[0].paths[0].at(-1)),[net.stations[hub].x,net.stations[hub].y]);
+ assert.equal(approaches.at(-1).mode,'walk');
+ assert.deepEqual(Array.from(approaches.at(-1).paths[0].at(-1)),[destination.x,destination.y]);
+ const bikeOrigin={x:net.stations[hub].x-9.8,y:net.stations[hub].y-2.8};
+ const bike=model.tripTime(bikeOrigin,select(west)).periods[0].sections[0];
+ assert.equal(bike.s,from);
+ assert.equal(bike.mode,'bike');
+ assert.ok(bike.metres>C.CFG.walk.maxAccessM+200 && bike.paths[0].length>3);
+ assert.deepEqual(Array.from(bike.paths[0][0]),[bikeOrigin.x,bikeOrigin.y]);
+ assert.deepEqual(Array.from(bike.paths[0].at(-1)),[net.stations[hub].x,net.stations[hub].y]);
+ assert.ok(Math.abs(bike.metres/(C.CFG.walk.mPerMin*C.CFG.bike.speedRatio)+C.CFG.bike.startMin-bike.minutes)<1e-6);
+
+ // Force access at the two ends so each assigned trip must take both lines and walk between their platforms.
+ const separate = M.empty(), station = (x,y) => M.addStation(separate,x,y,{size:'M',type},g.city);
+ const start = station(terminal.x,terminal.y), aGate = station(terminal.x,terminal.y+6);
+ const bGate = station(terminal.x+1,terminal.y+6), finish = station(terminal.x,terminal.y+12);
+ const aLine = M.newLine(separate), bLine = M.newLine(separate);
+ M.addSegment(separate,aLine,start,aGate,[],type);
+ M.addSegment(separate,bLine,bGate,finish,[],type);
+ const disconnected = M.compile(separate,g.city), entrance = disconnected.sIndex;
+ const acc = model.computeAccess(disconnected);
+ const routeTerminals = new Set([entrance.get(start),entrance.get(finish)]);
+ acc.zl = acc.zl.map(list => {
+   const nearest = list?.find(item => routeTerminals.has(item.s));
+   return nearest ? [nearest] : null;
+ });
+ acc.zFeedS.fill(-1);
+ const gates = new Set([entrance.get(aGate),entrance.get(bGate)]);
+ acc.transfers = acc.transfers.filter(link=>gates.has(link.a)&&gates.has(link.b));
+ model.setNetwork(disconnected,false,acc);
+ model.ctxs.wd.per[0].freq.fill(12);model.ctxs.wd.per[0].freqDir.fill(12);
+ const selected=id=>({...separate.stations[id],station:id});
+ const outdoor=model.tripTime(selected(start),selected(finish)).periods[0].sections.find(s=>s.kind==='transfer');
+ assert.equal(outdoor.outside,true);
+ assert.ok(Math.abs(outdoor.metres-acc.transfers.find(link=>link.a===entrance.get(aGate)).m)<1e-4);
+ assert.deepEqual(Array.from(outdoor.paths[0][0]),[separate.stations[aGate].x,separate.stations[aGate].y]);
+ assert.deepEqual(Array.from(outdoor.paths[0].at(-1)),[separate.stations[bGate].x,separate.stations[bGate].y]);
+ const period = model.makePer(model.net);
+ const work = {};
+ for(const _ of model.iterate(model.net,period,0,{noSmooth:true,buf:work})) {}
+ const gateFlow = sid => {
+   const route = disconnected.routes.find(r => r.stIds.includes(sid));
+   const offset = 4 * (model.net.platBase[route.id] + route.stIds.indexOf(sid));
+   return period.lineStationFlow.slice(offset,offset+4);
+ };
+ const left = gateFlow(aGate), right = gateFlow(bGate);
+ assert.ok(period.stats.metro>0 && left[2]>0 && left[3]>0);
+ assert.equal(left[0]+left[1]+right[0]+right[1],0);
+ assert.ok(Math.abs(left[2]/right[3]-1)<1e-5 && Math.abs(left[3]/right[2]-1)<1e-5);
 }
-console.log('PASS tutorial rail hub ridership, all three interchange types and reachable exit paths');
+console.log('PASS tutorial rail hub ridership, interchange types, per-line passenger flows and measured travel times');
 
 // Old-rule progress is backed up byte-for-byte, without changing assets or past accounts.
 const payload=copy(g.serialize());payload.rulesRevision=11;payload.traffic.v=4;
@@ -78,16 +177,20 @@ assert.ok(old.__backupSlot);assert.equal(JSON.parse(memory.get(C.Save.slotInfo(o
 const restored=C.Game.restore(copy(old));assert.equal(restored.econ.funds,payload.econ.funds);assert.equal(JSON.stringify(restored.net),JSON.stringify(payload.net));assert.equal(JSON.stringify(restored.econ.ledger),JSON.stringify(payload.econ.ledger));assert.equal(restored.traffic.v,C.CFG.TRAFFIC_MODEL);
 console.log('PASS exact v2.7.1 backup, traffic rebuild and preserved network, funds and historical ledger');
 
-const byId=C.Fac.byId,facIndex=g.model.facIndex,facStats=g.model.facStats,ready=g.model.trafficReady,verified=g.model.trafficVerified,clock={...g.clock},fare=g.econ.fare;
+const byId=C.Fac.byId,facIndex=g.model.facIndex,facStats=g.model.facStats,ready=g.model.trafficReady,verified=g.model.trafficVerified,clock={...g.clock},fare=g.econ.fare,fareMark=g.econ.fareMark;
 try{
  C.Fac.byId=id=>({id,name:'Fixture',T:{hub:true},open:id==='later'?2001.5:1990,close:id==='closed'?1999:null});g.model.facIndex=()=>0;g.model.facStats=()=>({inn:100,out:0,innM:80,outM:0});g.model.trafficReady=()=>true;g.model.trafficVerified=()=>true;
  const t={type:'facShare',fac:'later',deadline:[2000,1]};C.Tasks.alignFacDeadline(t);assert.equal(JSON.stringify(t.deadline),'[2001,10]');assert.ok(t.facDelay.includes('2001 年 7 月'));assert.equal(new C.Tasks().evaluate({...t,target:.5},g).wait,true);
- const T=new C.Tasks();T.nextDyn=g.ym()+1000;T.offerMonthly=()=>[];g.tasks=T;g.econ.fare={mode:'flat',flat:1};const q={id:'fare',kind:'hist',type:'facShare',fac:'open',target:.5,fare0:10,reward:100,title:'Fare',issuedAt:[2000,1],deadline:[2000,1],status:'active'};T.active=[q];
+ const T=new C.Tasks();T.nextDyn=g.ym()+1000;T.offerMonthly=()=>[];g.tasks=T;
+ const q={id:'fare',kind:'hist',type:'facShare',fac:'open',target:.5,reward:100,title:'Fare',issuedAt:[2000,1],deadline:[2000,1],status:'active'};
+ g.clock={y:2000,m:1,d:1};g.econ.setFare({mode:'flat',flat:1},2000,1);T.active=[q];
  for(let m=1;m<=3;m++){g.clock.m=m;T.monthly(g);assert.equal(q.fareWait,m);assert.equal(T.failed.length,0);assert.ok(q.graced.includes('票价'));}
- g.clock.m=4;T.monthly(g);assert.equal(T.failed.length,1);assert.ok(q.fareWhy);const saved=copy(T.serialize());assert.ok(C.Tasks.restore(saved).failed[0].fareWhy);
- g.clock.m=5;const q2={...q,id:'recover',status:'active',fareWait:0,deadline:[2000,5]};delete q2.evaluatedYM;T.active=[q2];T.monthly(g);assert.equal(q2.fareWait,1);g.econ.fare={mode:'flat',flat:10};g.clock.m=6;T.monthly(g);assert.equal(q2.status,'done');const n=T.done.length;T.monthly(g);assert.equal(T.done.length,n);
+ g.clock.m=4;T.monthly(g);assert.equal(T.failed.length,1);assert.ok(q.fareWhy);assert.ok(C.Tasks.restore(copy(T.serialize())).failed[0].fareWhy);
+ const q2={...q,id:'recover',status:'active',samples:[],fareWait:0,deadline:[2000,5]};delete q2.evaluatedYM;T.active=[q2];
+ for(let m=5;m<=7;m++){g.clock.m=m;T.monthly(g);}
+ assert.equal(q2.status,'done');const n=T.done.length;T.monthly(g);assert.equal(T.done.length,n);
  const mock={city:{W:1,H:1,landMax:[1],lockState:()=>({mask:[1],year:[2006]})}};assert.equal(C.Tasks.anchorsOpenBy(mock,[{x:.5,y:.5,r:.2}],2004*12),false);mock.city.lockState=()=>({mask:[1],year:[2003]});assert.equal(C.Tasks.anchorsOpenBy(mock,[{x:.5,y:.5,r:.2}],2004*12),true);
-}finally{C.Fac.byId=byId;g.model.facIndex=facIndex;g.model.facStats=facStats;g.model.trafficReady=ready;g.model.trafficVerified=verified;g.clock=clock;g.econ.fare=fare;}
+}finally{C.Fac.byId=byId;g.model.facIndex=facIndex;g.model.facStats=facStats;g.model.trafficReady=ready;g.model.trafficVerified=verified;g.clock=clock;g.econ.fare=fare;g.econ.fareMark=fareMark;}
 console.log('PASS facility deadlines and waiting, three fare deferrals, recovery, persisted failure reasons and buildable task anchors');
 
 // Waiving a retired core facility must not award partial completion for unmet remaining goals.

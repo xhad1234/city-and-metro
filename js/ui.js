@@ -175,9 +175,9 @@
       }, 300);
     });
     this.right.append(h('div', { class: 'p-head' }, this.rBack, this.rBadge, this.rTitle, h('button', { class: 'iconbtn', 'data-tip': '收起', 'data-key': 'Esc', onclick: function () { self.closePanel(); } }, ic('close'))), this.rBody);
-    // 底部：建设工具
+    // 底部主工具栏
     const tb = function (id, icon, label, key, onclick, cls) {
-      const b = h('button', { class: 'tbtn ' + (cls || ''), 'data-tip': label, 'data-act': key, onclick: onclick }, ic(icon), h('span', { class: 'lb' }, label));
+      const b = h('button', { class: 'tbtn ' + (cls || ''), 'aria-label': label, 'data-tip': label, 'data-act': key, onclick: onclick }, ic(icon), h('span', { class: 'lb' }, label));
       self.tbtns[id] = b; return b;
     };
     this.toolInd = h('span', { class: 'tind' });
@@ -186,7 +186,8 @@
       tb('station', 'station', '建站', 'tool.station', function () { self.tools.setTool('station'); }),
       tb('line', 'route', '绘线', 'tool.line', function () { self.tools.setTool('line'); }),
       tb('edit', 'pencil', '修改', 'tool.edit', function () { self.tools.setTool('edit'); }),
-      tb('demolish', 'bulldozer', '拆除', 'tool.demolish', function () { self.tools.setTool('demolish'); }, 'danger'));
+      tb('demolish', 'bulldozer', '拆除', 'tool.demolish', function () { self.tools.setTool('demolish'); }, 'danger'),
+      tb(TRIP_TIME.id, TRIP_TIME.icon, TRIP_TIME.name, null, function () { self.tools.setTool(self.tools.tool === TRIP_TIME.id ? 'select' : TRIP_TIME.id); }, 'trip-time-btn'));
     // 工具条上方：建设草案栏 + 当前工具的选项条（线路、建设方式、车站规模）
     this.draftbar = h('div', { id: 'draftbar', class: 'glass hidden' });
     this.toolopts = h('div', { id: 'toolopts', class: 'glass hidden' });
@@ -565,6 +566,7 @@
     this._opsYm = null; this._opsDaily = null;
     const self = this;
     this.toggleLayerPanel(false);
+    if (this.tools.tool === 'tripTime') this.tools.setTool('select');
     this._tot = null; this._totCity = null; this._popShown = null; this._funds = null; this._congT = 0;
     for (const pill of [this.pills.pop, this.pills.money]) pill.v._tw = null;
     this.clearCelebrations();
@@ -640,6 +642,7 @@
     if (force || now - this.lastTick > 250) {
       this.lastTick = now;
       this.updateTop();
+      if (!this.screen.classList.contains('hidden')) this.screen.lastElementChild?.refreshTraffic?.();
       if (this.pageDailyStale && !g.model.dailyStale && this.stack.length) {
         const a = document.activeElement;
         if (a && this.rBody.contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) this._pendingRefresh = true;
@@ -737,6 +740,7 @@
     if (c.sat.ico !== sk) { c.sat.ico = sk; c.sat.badge.className = 'badge ' + (sk === 'smile' ? 'b-green' : (sk === 'meh' ? 'b-orange' : 'b-red')); c.sat.badge.innerHTML = ''; c.sat.badge.appendChild(ic(sk)); }
     if (CM.Voices && this.updateSatDock) this.updateSatDock(g);
     if (this.tickOps) this.tickOps(g);
+    if (this.tools.tool === 'tripTime') this.refreshTripTime();
     if (this.layer === 'tod' && this.R.layerOpt.todMode === 'rev' && this._revenueLegend !== this.R.stationRevenue() && !this.legendCard.contains(document.activeElement)) this.renderDock();
     const n = g.tasks.active.length;
     this.taskCnt.textContent = n; this.taskCnt.style.display = n ? '' : 'none';
@@ -1018,7 +1022,11 @@
   // ======================== 工具坞与视图 ========================
   UI.prototype.renderToolbar = function () {
     const g = this.g(), t = this.tools ? this.tools.tool : 'select';
-    for (const k of ['select', 'station', 'line', 'edit', 'demolish']) this.tbtns[k].classList.toggle('on', t === k);
+    for (const k of ['select', 'station', 'line', 'edit', 'demolish', TRIP_TIME.id]) {
+      const button = this.tbtns[k], active = t === k;
+      button.classList.toggle('on', active);
+      button.setAttribute('aria-pressed', String(active));
+    }
     // 当前工具的滑动高亮
     const ab = this.tbtns[t];
     if (ab && ab.offsetWidth) {
@@ -1121,6 +1129,8 @@
   UI.prototype.onToolChange = function (t) {
     snd('tool');
     this.renderToolbar();
+    if (t === 'tripTime') this.closePanel(true);
+    if (t === 'tripTime' || this.legendCard.classList.contains('trip-time')) this.renderDock();
     if (this.topIs(['build']) && !this.g().draft) this.closePanel();
     if (this.multi && this.topIs(['multi'])) this.renderPage(false);   // 切到或切出拆除工具时，多选页随之变为批量拆除或批量修改
   };
@@ -1141,7 +1151,7 @@
   UI.prototype.renderToolOpts = function () {
     const g = this.g(), T = this.tools, el = this.toolopts;
     if (!el) return;
-    if (!g || !T || T.tool === 'select') {
+    if (!g || !T || T.tool === 'select' || T.tool === 'tripTime') {
       el.classList.add('hidden'); this._replacingToolOpts = true;
       try { el.innerHTML = ''; } finally { this._replacingToolOpts = false; }
       this._toKey = null; return;
@@ -1465,18 +1475,100 @@
   };
 
   // ======================== 图层坞 ========================
+  const TRIP_TIME = { id: 'tripTime', name: '交通时间', icon: 'timer', color: '#2461b5' };
+  UI.prototype.refreshTripTime = function (force) {
+    const T = this.tools, body = this.legendCard.querySelector('.trip-time-body');
+    if (!body || T.tool !== 'tripTime') return;
+    const changed = T.updateTripTime();
+    if (!force && !changed) return;
+    const active = document.activeElement;
+    const key = body.contains(active) ? active.dataset.tripControl : null;
+    body.replaceChildren(this.tripTimePanel());
+    if (key) Array.from(body.querySelectorAll('[data-trip-control]')).find(el => el.dataset.tripControl === key)?.focus({ preventScroll: true });
+  };
+  UI.prototype.tripTimePanel = function () {
+    const ui = this, g = this.g(), T = this.tools, t = T.tripTime, result = t.result;
+    const name = s => g.model.net.C.stations[s].name;
+    const time = m => U.fmtNum(m, 1) + ' 分钟';
+    const distance = leg => (leg.estimatedDistance ? '约 ' : '') + U.fmtKm(leg.metres);
+    const body = h('div');
+    const instruction = ['在地图上点击起点。', '在地图上点击终点。'];
+    const points = t.points;
+    if (points.length < 2) {
+      body.append(h('p', { class: 'trip-instruction', role: 'status' }, instruction[points.length]),
+        h('p', { class: 'tiny muted' }, '可点击地图任意位置，或点击车站测量站到站时间。'));
+    }
+    if (points.length) body.append(h('div', { class: 'trip-points' }, points.map((p, i) =>
+      h('div', { class: 'trip-point' }, h('span', { class: i ? 'trip-b' : 'trip-a' }, i ? 'B' : 'A'),
+        h('span', null, g.net.stations[p.station]?.name || (i ? '地图终点' : '地图起点'))))));
+    if (points.length) body.append(h('div', { class: 'trip-actions' },
+      h('button', { class: 'btn sm ghost', 'data-trip-control': 'clear', onclick: () => T.setTripPoints([]) }, '重选'),
+      points.length === 2 ? h('button', { class: 'btn sm ghost', 'data-trip-control': 'reverse', onclick: () => T.setTripPoints(points.slice().reverse()) }, '交换起终点') : null));
+    if (points.length < 2 || !result) return body;
+    const status = {
+      pending: '正在更新运营线网…', empty: '还没有运营线路。', same: '请选择不同的起点和终点。',
+      start: '起点附近没有可接驳的运营车站。', end: '终点附近没有可接驳的运营车站。',
+      both: '起终点附近都没有可接驳的运营车站。',
+    };
+    if (result.status !== 'ready') { body.append(h('p', { class: 'note', role: 'status' }, status[result.status])); return body; }
+    body.append(h('div', { class: 'trip-caption' }, '工作日 · 总用时与总距离'),
+      h('div', { class: 'trip-periods', role: 'group', 'aria-label': '出行时段' }, CFG.periods.map((p, i) => {
+        const trip = result.periods[i], on = t.period === i;
+        return h('button', { class: 'trip-period' + (on ? ' on' : ''), 'data-trip-control': String(i),
+          'aria-pressed': String(on), onclick: function () { t.period = i; ui.refreshTripTime(true); } },
+          h('span', null, p.name), h('b', null, trip ? time(trip.total) : '无可用行程'),
+          trip ? h('span', { class: 'trip-distance' }, distance(trip)) : null);
+      })));
+    const trip = result.periods[t.period];
+    body.append(h('div', { class: 'trip-caption' }, CFG.periods[t.period].name + ' · 分段用时与距离'));
+    if (!trip) body.append(h('p', { class: 'note' }, '这个时段没有可用的地铁行程。'));
+    else {
+      const mode = { station: '车站', bike: '骑行（含 ' + CFG.bike.startMin + ' 分钟起步）', walk: '步行' };
+      body.append(h('ol', { class: 'trip-sections' }, trip.sections.map(section => {
+        let title, detail, color;
+        if (section.kind === 'ride') {
+          const rt = g.model.net.C.routes[section.r];
+          title = rt.label; color = AX.line(rt.line);
+          detail = name(section.from) + ' → ' + name(section.to);
+        } else if (section.kind === 'transfer') {
+          title = section.outside ? '站外换乘' : '站内换乘';
+          detail = [section.from === section.to ? name(section.from) : name(section.from) + ' → ' + name(section.to), ' · ',
+            h('span', null, '步行 ' + time(section.walk) + ' · 候车 ' + time(section.wait))];
+        } else if (section.kind === 'wait') {
+          title = '首次候车'; detail = name(section.s);
+        } else {
+          title = section.kind === 'access' ? '起点接驳' : '终点接驳';
+          detail = [mode[section.mode], ' · ', name(section.s)];
+        }
+        const pathStyle = section.paths?.length ? CM.Tools.tripPathStyles[section.mode === 'bike' ? 'bike' : 'walk'] : null;
+        const symbol = pathStyle ? h('i', { class: 'trip-path-key', style: { borderColor: pathStyle.color } }) :
+          color ? h('i', { style: { background: color } }) : null;
+        return h('li', { class: 'trip-section' },
+          h('div', { class: 'trip-segment' }, h('span', null, symbol, title),
+            h('span', { class: 'trip-metrics' }, h('b', null, time(section.minutes)),
+              section.kind !== 'wait' ? h('span', { class: 'trip-distance' }, distance(section)) : null)),
+          h('small', null, detail));
+      })));
+      if (trip.estimatedDistance) body.append(h('p', { class: 'tiny muted' }, '站内通道距离按步行时间估算。'));
+    }
+    if (t.period === 3) body.append(h('p', { class: 'tiny muted trip-night' }, '夜间按 19:00–24:00 的服务估算。00:00–06:00 停运。'));
+    return body;
+  };
   UI.prototype.renderDock = function () {
     const card = this.legendCard;
     if (card.contains(document.activeElement)) document.activeElement.blur();
     for (const x of LAYERS) if (this.dockBtns[x.id]) this.dockBtns[x.id].classList.toggle('on', this.layer === x.id);
-    const L = LAYERS.find((x) => x.id === this.layer);
+    const trip = this.tools?.tool === 'tripTime';
+    const layer = LAYERS.find((x) => x.id === this.layer);
+    const L = trip ? TRIP_TIME : layer;
+    card.classList.toggle('trip-time', trip);
     // 「图层」按钮：开启图层时显示该图层的颜色与图标
     const lb = this.layerBtn;
     if (lb && lb._layer !== this.layer) {
       lb._layer = this.layer; lb.innerHTML = '';
-      lb.append(ic(L ? L.icon : 'layers'), h('span', { class: 'lb' }, '图层'));
-      lb.classList.toggle('on', !!L); if (L) lb.style.setProperty('--lc', L.color); else lb.style.removeProperty('--lc');
-      lb.setAttribute('data-tip', L ? '图层：' + L.name + ' · 点击更换或关闭' : '图层');
+      lb.append(ic(layer ? layer.icon : 'layers'), h('span', { class: 'lb' }, '图层'));
+      lb.classList.toggle('on', !!layer); if (layer) lb.style.setProperty('--lc', layer.color); else lb.style.removeProperty('--lc');
+      lb.setAttribute('data-tip', layer ? '图层：' + layer.name + ' · 点击更换或关闭' : '图层');
     }
     const hidden = !L || !this.g();
     card.inert = hidden; card.setAttribute('aria-hidden', hidden ? 'true' : 'false');
@@ -1487,8 +1579,10 @@
     const self = this;
     const badge = h('span', { class: 'badge lc-badge' }, ic(L.icon)); badge.style.background = L.color;
     this._revenueLegend = L.id === 'tod' ? this.R.stationRevenue() : null;
-    card.append(h('div', { class: 'lc-head' }, badge, h('div', { class: 'p-title' }, L.name), h('button', { class: 'iconbtn', 'data-tip': '关闭图层', onclick: function () { self.setLayer('none'); } }, ic('close'))),
-      h('div', { class: 'lc-body' }, this.legend(L.id)));
+    if (trip) this.tools.updateTripTime();
+    const closeLabel = trip ? '关闭交通时间' : '关闭图层';
+    card.append(h('div', { class: 'lc-head' }, badge, h('div', { class: 'p-title' }, L.name), h('button', { class: 'iconbtn', 'aria-label': closeLabel, 'data-tip': closeLabel, onclick: function () { if (trip) self.tools.setTool('select'); else self.setLayer('none'); } }, ic('close'))),
+      h('div', { class: 'lc-body' + (trip ? ' trip-time-body' : '') }, trip ? this.tripTimePanel() : this.legend(L.id)));
     card.lastElementChild.scrollTop = scrollTop;
     card.classList.remove('hidden');
     this.placeFeed();
@@ -1525,7 +1619,7 @@
         if (L.group !== G[0]) continue;
         const on = self.layer === L.id;
         const b = h('button', { class: 'lp-btn' + (on ? ' on' : ''), 'data-tip': L.name + ' · ' + L.desc, 'aria-label': L.name, 'aria-pressed': on ? 'true' : 'false',
-          onclick: function () { self.setLayer(self.layer === L.id ? 'none' : L.id); self.toggleLayerPanel(false); } }, ic(L.icon));
+          onclick: function () { if (self.tools.tool === 'tripTime') self.tools.setTool('select'); self.setLayer(self.layer === L.id ? 'none' : L.id); self.toggleLayerPanel(false); } }, ic(L.icon));
         b.style.setProperty('--lc', L.color);
         self.dockBtns[L.id] = b; row.appendChild(b);
       }
@@ -1657,6 +1751,8 @@
         if (R.layerOpt.facP === 'all') { for (const k of (CM.DATA.industryFacilities ? TR.keys : ['sc', 'sh', 'md', 'lz'])) li(AX.category(TR.keys.indexOf(k), TR.color[k]), TR.name[k] + '为主的片区'); }
         else li(AX.category(TR.keys.indexOf(R.layerOpt.facP), TR.color[R.layerOpt.facP]), TR.name[R.layerOpt.facP] + '吸引（片区汇总）');
         li('#7a8699', AX.enabled() ? '圆点大小为日到访量；外环由紫到蓝表示地铁比例提高，可点击查看数值' : '圆点：重要设施（大小为日到访量，外环越绿乘地铁比例越高）', 'ring');
+        const g = self.g();
+        if (g && CM.Fac.list(g.city).some(f => CM.Fac.isPaused(f, g.year()))) li('#7a8699', '空心虚线圆：改造中的设施', 'ring');
         note = (CM.DATA.bg ? "片区颜色为普通设施（中小学、社区商业、诊所、街区公园等）按片区汇总的吸引出行；重要设施单独计算，点击圆点查看详情。设施位置与年份为史实参考，规模为估算，到访量为模拟结果（道路、背景交通及地铁出行）。" : '片区颜色为普通设施（中小学、社区商业、诊所、街区公园等）按片区汇总的吸引出行；重要设施单独计算，点击圆点查看详情。设施位置与年份为史实参考，规模为估算，到访量为模拟结果（汽车 + 地铁出行，不含步行）。');
         if (CM.DATA.industryFacilities) note += '全部包含通勤。产业园区圆点汇总范围内现有岗位的通勤，点击可查看岗位数、到访量与地铁比例；不额外增加岗位或出行。';
         break;
@@ -2197,6 +2293,12 @@
     this.R.setHighlight({ kind: 'region', region: k, lx: rg.cx, ly: rg.cy, label: rg.name.replace(/（.*）/, '') });
     this.fitBox(b[0], b[1], b[2], b[3], 22);
   };
+  UI.prototype.locateTownship = function (k) {
+    const town = this.g().city.townships?.[k];
+    if (!town?.cells) return;
+    this.R.setHighlight({ kind: 'township', township: k, lx: town.x, ly: town.y, label: town.name });
+    this.fitBox(...town.bbox, 22);
+  };
   UI.prototype.locateRoad = function (name) {
     const city = this.g().city, ways = [];
     let x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -2213,7 +2315,7 @@
     if (this.dropdown) this.closeMenu();
     const self = this, favs = g.favs, city = g.city, D = CM.DATA;
     favs.names = favs.names || {};
-    const input = h('input', { type: 'search', placeholder: '搜索车站、线路、道路、区域或地名', 'aria-label': '搜索车站、线路、道路、区域或地名', autocomplete: 'off' });
+    const input = h('input', { type: 'search', placeholder: '搜索车站、线路、道路、设施或地名', 'aria-label': '搜索车站、线路、道路、设施或地名', autocomplete: 'off' });
     const list = h('div', { class: 'srch-list', role: 'listbox' });
     const pop = h('div', { class: 'search-pop' }, h('div', { class: 'srch-in' }, ic('search'), input, h('kbd', null, 'Esc'), h('button', { class: 'iconbtn', 'aria-label': '关闭搜索', onclick: function () { self.closeSearch(); } }, ic('close'))), list);
     pop._place = function () {
@@ -2227,14 +2329,24 @@
     };
     let items = [], cur = 0;
     // 地理条目（区域、城区、地标、道路、地名）：打开时生成一次
-    const RANK = { lines: 0, stations: 1, region: 2, district: 2, landmark: 3, road: 4, place: 5 };
+    const RANK = { lines: 0, stations: 1, township: 2, region: 3, district: 3, facility: 4, landmark: 4, road: 5, place: 6 };
     const geo = [];
     city.regions.forEach(function (rg, k) {
       if (!rg.name || !rg.cells || !rg.bbox) return;
       geo.push({ kind: 'region', id: k, name: rg.name, sub: '区域 · ' + (rg.scenic ? '风景区' : city.regionOpen[k] ? '已开放' : '尚未开放（' + U.regionLock(rg) + '）'), icon: 'map' });
     });
+    for (const town of city.townships || []) {
+      if (town?.cells) geo.push({ kind: 'township', id: town.id, name: town.name, sub: town.district, icon: 'map' });
+    }
     for (const d of city.districtLabels || []) geo.push({ kind: 'district', name: d[0], sub: '城区', x: d[1], y: d[2], icon: 'map' });
     D.landmarks.forEach(function (lm, k) { geo.push({ kind: 'landmark', name: lm.name, sub: '地标' + (city.landmarkOn[k] ? '' : ' · 尚未建成（' + lm.year + ' 年）'), x: lm.x, y: lm.y, icon: 'building' }); });
+    const Fac = CM.Fac, yr = g.year();
+    for (const f of Fac.list(city)) {
+      if (f.ext || f.gen || f.lmK >= 0) continue;
+      const paused = Fac.isPaused(f, yr);
+      if (!paused && !Fac.active(f, yr, city)) continue;
+      geo.push({ kind: 'facility', id: f.id, name: f.name, sub: f.T.name + (paused ? ' · 改造中' : ''), x: f.x, y: f.y, icon: f.T.icon });
+    }
     const roads = new Map(), CLS = ['', '支路', '次干道', '主干道', '快速路'];
     city.roadGroups.forEach(function (gr, k) {
       if (!gr.name || !city.roadsBuilt[k]) return;
@@ -2264,7 +2376,9 @@
       if (it.st) { self.select({ kind: 'station', id: it.id }); self.flyTo(it.x, it.y, Math.max(self.R.cam.zoom, 24)); }
       else if (it.line) { self.openPage('line', it.id, { replaceTop: self.topIs(['station', 'line', 'road', 'zone', 'facility']) }); self.flyToStations(it.stations); }
       else if (it.kind === 'region') self.locateRegion(it.id);
+      else if (it.kind === 'township') self.locateTownship(it.id);
       else if (it.kind === 'road') self.locateRoad(it.name);
+      else if (it.kind === 'facility') { self.select({ kind: 'facility', id: it.id }); self.locatePoint(it.x, it.y, it.name, 0.8); }
       else if (it.kind === 'district') self.locatePoint(it.x, it.y, it.name, 4, 4);
       else self.locatePoint(it.x, it.y, it.name, it.kind === 'landmark' ? 0.8 : 1.2);
     };
@@ -2286,16 +2400,19 @@
           fav.push(e || { kind: kind, id: id, name: favs.names[id] || (kind === 'lines' ? '线路' : '车站'), sub: '已拆除，无法定位', gone: true });
         }
         if (fav.length) { list.appendChild(h('div', { class: 'srch-h' }, '收藏')); fav.forEach(function (it) { items.push(it); list.appendChild(row(it, items.length - 1)); }); }
-        else list.appendChild(h('div', { class: 'note', style: { padding: '8px 10px' } }, '输入名称搜索车站、线路、道路、区域、地标或地名，选中后在地图上定位并高亮。在车站或线路详情中点击 ☆ 可收藏，收藏会显示在这里。'));
+        else list.appendChild(h('div', { class: 'note', style: { padding: '8px 10px' } }, '输入名称搜索车站、线路、道路、设施、区域或地名，选中后在地图上定位。在车站或线路详情中点击 ☆ 可收藏。'));
         const lines = all.filter(function (x) { return x.line && !self.isFav('lines', x.id); });
         if (lines.length) { list.appendChild(h('div', { class: 'srch-h' }, '全部线路')); lines.forEach(function (it) { items.push(it); list.appendChild(row(it, items.length - 1)); }); }
         return;
       }
       const searchable = function (x) { return CM.I18n ? CM.I18n.search(x.name) : x.name.toLowerCase(); };
       const hits = all.concat(geo).filter(function (x) { return searchable(x).indexOf(q) >= 0; });
-      const score = function (x) { const n = searchable(x); return (canFav(x) && self.isFav(x.kind, x.id) ? 0 : 1000) + (x.name.toLowerCase() === q ? 0 : n.indexOf(q) === 0 ? 100 : 200) + RANK[x.kind] * 10; };
+      const score = function (x) {
+        const n = searchable(x), exact = x.name.toLowerCase() === q || (x.kind === 'township' && x.name.replace(/(?:街道|镇|乡)$/, '') === q);
+        return (canFav(x) && self.isFav(x.kind, x.id) ? 0 : 1000) + (exact ? 0 : n.indexOf(q) === 0 ? 100 : 200) + RANK[x.kind] * 10;
+      };
       hits.sort(function (a, b) { return score(a) - score(b) || a.name.length - b.name.length; });
-      if (!hits.length) { list.appendChild(h('div', { class: 'note', style: { padding: '8px 10px' } }, '没有名称包含「' + input.value.trim() + '」的车站、线路、道路、区域或地名。')); return; }
+      if (!hits.length) { list.appendChild(h('div', { class: 'note', style: { padding: '8px 10px' } }, '没有找到「' + input.value.trim() + '」。')); return; }
       hits.slice(0, 50).forEach(function (it) { items.push(it); list.appendChild(row(it, items.length - 1)); });
     };
     input.addEventListener('input', render);
