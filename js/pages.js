@@ -245,7 +245,10 @@
     });
     b.appendChild(list);
     // 地铁带动发展（v2.3）：开发等级同时提高车站对周边新增人口与岗位的吸引
-    b.appendChild(h('div', { class: 'note' }, ic('trend', 13), ' 开发等级越高，车站对周边约 1 km 新增人口与岗位的吸引越强，几年后这里会更繁华；城市发展图层 →「地铁带动」可以查看。'));
+    const growthNote = CFG.growth.stationPopulation
+      ? ' 开发等级越高，车站对周边约 2 km 新增人口的吸引越强。可在城市发展图层的「地铁带动」中查看。'
+      : ' 开发等级越高，车站对周边约 1 km 新增人口与岗位的吸引越强，几年后这里会更繁华；城市发展图层 →「地铁带动」可以查看。';
+    b.appendChild(h('div', { class: 'note' }, ic('trend', 13), growthNote));
     if (free) b.appendChild(h('div', { class: 'note' }, '自由建造：资金不限，收入只作参考。'));
     return b;
   };
@@ -1081,6 +1084,7 @@
         return '已接通 ⇄ 经' + (lk.portal ? '接驳口车站' : '') + '「' + lk.st.name + '」' + (names ? '（' + names + '）' : '') + '在地图边缘连接地图外' + (lk.portal ? '，全部接驳出行可乘地铁' : '');
       })()] : null,
       ['参考规模（估算）', Fac.sizeText(f, yr)],
+      !f.ext && !Fac.footprint(f, yr).length ? ['场地轮廓', '暂无明确边界，地图标示接驳点'] : null,
       f.entrance ? ['步行入口', h('button', { class: 'btn sm ghost', onclick: function () { self.locatePoint(f.entrance[0], f.entrance[1], f.name + ' · 步行入口', 0.5, 3); } }, '定位')] : null,
       f.t === 'industry' && active ? ['园区岗位（游戏估算）', U.fmtPeople(model.fn.industryJobs[k]) + ' 岗位'] : null,
       [f.gameYear ? '纳入游戏' : '启用', f.open > -1e8 ? (f.lmK >= 0 ? D.landmarks[f.lmK].year + ' 年（地标落成）' : Math.floor(f.open) + ' 年') : '开局前已有'],
@@ -1118,9 +1122,11 @@
       el.appendChild(this.sec('f-acc', '附近地铁站与接驳', '', function () {
         const bx = h('div'), acc = model.net ? model.net.acc : null, node = model.Z + k;
         const list = acc && acc.NZ === model.fn.NZ ? acc.zl[node] : null;
-        if (acc && acc.NZ === model.fn.NZ) bx.appendChild(self.kv([[f.t === 'industry' ? '岗位步行 15 分钟内可达车站' : '场地步行 15 分钟内可达车站', U.fmtPct(acc.zCov[node], 0) + (f.t === 'industry' ? ' 的岗位' : ' 的场地')], ['平均步行时间', acc.zCov[node] > 0 ? U.fmtNum(acc.zWalk[node], 1) + ' 分钟' : '—']]));
+        const bikeAccess = CM.Fac.allowsBikeAccess(f);
+        if (acc && acc.NZ === model.fn.NZ) bx.appendChild(self.kv([[f.t === 'industry' ? '岗位步行 15 分钟内可达车站' : bikeAccess ? '场地步行或骑行可达车站' : '场地步行 15 分钟内可达车站', U.fmtPct(acc.zCov[node], 0) + (f.t === 'industry' ? ' 的岗位' : ' 的场地')], [bikeAccess ? '接驳时间' : '平均步行时间', acc.zCov[node] > 0 ? U.fmtNum(acc.zWalk[node], 1) + ' 分钟' : '—']]));
         if (!list || !list.length) {
           if (f.t === 'industry') { bx.appendChild(h('div', { class: 'callout info' }, '园区岗位附近暂无步行 15 分钟内的运营车站。可沿就业密集区域增设车站；部分工作地仍可能通过骑行接驳地铁。')); return bx; }
+          if (bikeAccess) { bx.appendChild(h('div', { class: 'callout warn' }, '沿可通行路网，在步行或骑行接驳上限内没有运营车站。')); return bx; }
           // 有车站就在附近却走不到时说明原因（v2.6.1 玩家反馈）：步行距离按道路计算，水面、铁路和没有路的地方都要绕行
           const C = model.net ? model.net.C : null; let ns = null, nd = 1e9;
           if (C) C.stations.forEach(function (s, i) { if (!C.serviced[i]) return; const d = U.dist(s.x, s.y, f.x, f.y); if (d < nd) { nd = d; ns = s; } });
@@ -1131,7 +1137,7 @@
         } else for (const e of list) {
           const s = model.net.C.stations[e.s]; if (!s) continue;
           const lines = Array.from(model.net.C.stationLines[e.s] || []).map(function (lid) { return g.net.lines[lid]; }).filter(Boolean);
-          bx.appendChild(h('div', { class: 'chg small clickable', onclick: function () { self.select({ kind: 'station', id: s.id }); } }, h('span', null, lines.map(function (L) { return h('span', { class: 'dot', style: { background: AX.line(L), marginRight: '4px' } }); }), s.name), h('span', { class: 'num' }, '步行约 ' + Math.max(1, Math.round(e.w)) + ' 分钟')));
+          bx.appendChild(h('div', { class: 'chg small clickable', onclick: function () { self.select({ kind: 'station', id: s.id }); } }, h('span', null, lines.map(function (L) { return h('span', { class: 'dot', style: { background: AX.line(L), marginRight: '4px' } }); }), s.name), h('span', { class: 'num' }, (e.bikeShare ? '骑行接驳约 ' : '步行约 ') + Math.max(1, Math.round(e.w)) + ' 分钟')));
         }
         return bx;
       }, true));
@@ -1140,7 +1146,7 @@
         if (f.t === 'industry') return h('div', { class: 'note' }, '沿园区就业密集区布置多座车站，连接主要居住片区，并保证早晚高峰班次。园区中心的一座站不会自动覆盖整个园区。');
         const acc = model.net ? model.net.acc : null, node = model.Z + k;
         const list = acc && acc.NZ === model.fn.NZ ? (acc.zl[node] || []) : [], C = model.net ? model.net.C : null;
-        const best = list.length ? list.reduce(function (a, b) { return b.w < a.w ? b : a; }) : null, bs = best && C ? C.stations[best.s] : null;
+        const best = list.length ? list.reduce(function (a, b) { return (b.cost ?? CFG.choice.walkW * b.w) < (a.cost ?? CFG.choice.walkW * a.w) ? b : a; }) : null, bs = best && C ? C.stations[best.s] : null;
         const near = function () { self.tools.setTool('station'); self.locatePoint(f.x, f.y, f.name, Math.max(0.8, f.r), 3); self.toast('点击空地建站，再用「绘线」接入线路', 'info'); };
         const items = [];
         if (f.ext) {
@@ -1150,6 +1156,7 @@
             : lk ? ['good', '已在地图边缘接通', '', []] :
             ['bad', '还没接通地图外的' + f.T.name, '把线路修到地图边缘的接驳口。', [['route', '开始绘线', function () { self.tools.setTool('line'); }, true]]]);
         } else if (!bs) items.push(['bad', '附近没有车站', '在设施 400 m 内建站并接入线路。', [['station', '在附近建站', near, true]]]);
+        else if (best.bikeShare) items.push(['good', '经「' + bs.name + '」骑行接驳约 ' + Math.max(1, Math.round(best.w)) + ' 分钟', '骑行到设施入口或场地边缘，场内路程继续步行。', []]);
         else if (best.w > 7) items.push(['warn', '最近车站「' + bs.name + '」要走 ' + Math.round(best.w) + ' 分钟', '在 400 m 内加站，或把车站移近（250 m 内免费）。', [['station', '在附近建站', near]]]);
         else items.push(['good', '步行 ' + Math.max(1, Math.round(best.w)) + ' 分钟到「' + bs.name + '」', '', []]);
         if (bs || (f.ext && Fac.extLink(f, g))) {
@@ -2156,8 +2163,10 @@
       // 目标与当前值；连接任务列出每个站点区域是否已有车站
       const combo = t.type === 'combo';
       if ((t.type === 'connect' || t.type === 'budgetConnect' || combo) && t.anchors) {
-        const C0 = g.compiled, hit = limited ? ev.hits : t.anchors.map(function (a) { return C0.stations.some(function (s, i) { return C0.serviced[i] && U.dist(s.x, s.y, a.x, a.y) <= a.r; }); });
-        c.appendChild(h('div', { class: 'tk-anchors' }, t.anchors.map(function (a, i) {
+        const anchors = CM.Tasks.connectionAnchors(g, t.anchors);
+        if (anchors.some(a => g.city.regionAt?.(a.x, a.y)?.connectRadiusM === 1000)) c.appendChild(h('div', { class: 'tk-basis tiny muted' }, '郊区目标：直线 1 km 内有运营车站'));
+        const C0 = g.compiled, hit = limited ? ev.hits : anchors.map(function (a) { return C0.stations.some(function (s, i) { return C0.serviced[i] && U.dist(s.x, s.y, a.x, a.y) <= a.r; }); });
+        c.appendChild(h('div', { class: 'tk-anchors' }, anchors.map(function (a, i) {
           return h('button', { class: 'tk-anchor' + (hit[i] ? ' on' : ''), 'data-tip': '在地图上定位「' + a.name + '」（半径约 ' + Math.round(a.r * CFG.CELL_M) + ' m）', onclick: function () { self.locatePoint(a.x, a.y, a.name, a.r || 2); } }, CM.icon(hit[i] ? 'check' : 'locate', 13), a.name);
         })));
         if (!combo) {

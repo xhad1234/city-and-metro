@@ -996,7 +996,7 @@
     // 地面铁路（v1.9）：地面车站不能压在运营中的铁路上；地下与高架车站可以
     if (type === 'surface' && city.railDist && city.railDist(x, y) < 0.3) return { ok: false, msg: '地面车站不能建在铁路上', how: '把车站移离铁路约 80 m 以上，或改为地下 / 高架车站。' };
     const protectedLandmark = constructionLandmark(city, c);
-    if (protectedLandmark && city.inLandmarkSite(city.protectedId[c] - 1, x, y)) return { ok: false, msg: '受保护建筑「' + protectedLandmark.name + '」，不能设站或拆除', how: '把车站移到相邻街区，保护建筑周边仍可通过车站出入口服务。' };
+    if (type !== 'underground' && protectedLandmark && city.inLandmarkSite(city.protectedId[c] - 1, x, y)) return { ok: false, msg: '受保护建筑「' + protectedLandmark.name + '」，只能建地下车站', how: '把建设方式改为「地下」，或把车站移到相邻街区。' };
     return { ok: true };
   };
 

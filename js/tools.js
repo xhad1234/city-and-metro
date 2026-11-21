@@ -135,7 +135,7 @@
     if (e.button === 1) { this.ptr.pan = true; e.preventDefault(); return; }
     if (e.button === 0 && e.shiftKey && this.tool === 'demolish' && !g.jumping) { this.ptr.box = true; return; }   // 拆除工具：Shift + 拖动框选
     // 延长手柄：进入绘线，拖到目标位置松开即连线（只点击则从该端点开始逐站绘制）
-    const ext = e.button === 0 ? this.pickExtend(e.clientX, e.clientY) : null;
+    const ext = e.button === 0 && !this.R.usesDevelopmentHistory?.() ? this.pickExtend(e.clientX, e.clientY) : null;
     if (ext) { this.ptr.extend = ext; return; }
     if (e.button === 0 && (this.tool === 'edit' || this.tool === 'line') && !g.jumping && !e.shiftKey) {
       const h = this.pickHandle(e.clientX, e.clientY);
@@ -184,13 +184,20 @@
     if (p.orbit && p.moved) return;   // 拖动旋转结束，不当作点击
     if (p.button === 2) { this.onRight(e); return; }
     // 选择工具下点击行驶中的列车：进入跟随模式（车站优先）
-    if (p.button === 0 && !p.moved && this.tool === 'select' && CM.Follow && !this.R.pickStation(e.clientX, e.clientY)) { const tr = CM.Follow.pick(e.clientX, e.clientY); if (tr) { CM.Follow.start(tr); return; } }
+    if (p.button === 0 && !p.moved && this.tool === 'select' && !this.R.usesDevelopmentHistory?.() && CM.Follow && !this.R.pickStation(e.clientX, e.clientY)) { const tr = CM.Follow.pick(e.clientX, e.clientY); if (tr) { CM.Follow.start(tr); return; } }
     if (p.button === 0 && !p.moved) this.onClick(e.clientX, e.clientY, e.shiftKey || e.altKey, e.ctrlKey || e.metaKey || e.shiftKey);
   };
 
   // ---------------- 悬停与提示 ----------------
   // h：投影到该高度的水平面（v2.3）；建站与绘线按所选建设方式的高度，2D / 2.5D 下落点都在光标正下方
   Tools.prototype.world = function (sx, sy, h) { return this.R.unproject(sx, sy, h); };
+  // Measurement and travel-time clicks share the same ground projection and
+  // station snapping. Measurement can also inspect the current construction draft.
+  Tools.prototype.groundPoint = function (sx, sy, net) {
+    const id = this.R.pickStation(sx, sy), station = (net || this.net()).stations[id];
+    const p = station || this.world(sx, sy, 0);
+    return { x: p.x, y: p.y, station: station ? id : null };
+  };
   Tools.prototype.buildH = function () { return this.tool === 'line' || this.tool === 'station' ? this.R.trackH(this.buildType) : 0; };
   // 经纬网格吸附：建站、绘线（含 Shift 转弯点）与修改工具拖动时，新落点取最近的网格交叉点；点击已有车站、在轨道上插站不吸附
   Tools.prototype.snapAt = function (w) {
@@ -258,10 +265,25 @@
     let w = this.world(sx, sy, this.buildH());
     this.cursor = { sx: sx, sy: sy, x: w.x, y: w.y, mod: mod }; this.cursorOut = false;
     this.snapPt = null;
+    if (this.tool === 'select' && R.usesDevelopmentHistory?.()) {
+      this.hover = null; this.portalHover = null;
+      this.ui.setTooltip(null);
+      R.cv.style.cursor = this.ptr?.pan ? 'var(--cur-grabbing)' : 'var(--cur-crosshair)';
+      return;
+    }
     if (this.tool === 'tripTime') {
       const st = g.net.stations[R.pickStation(sx, sy)];
       this.hover = null; this.portalHover = null;
       this.ui.setTooltip(st ? { title: st.name, lines: [] } : null, sx, sy);
+      R.cv.style.cursor = 'var(--cur-crosshair)';
+      return;
+    }
+    if (this.tool === 'measure') {
+      const point = this.groundPoint(sx, sy);
+      this.cursor.x = point.x; this.cursor.y = point.y;
+      this.hover = point.station ? { kind: 'station', id: point.station } : null;
+      this.portalHover = null;
+      this.hint = this.measureTip(); this.ui.setTooltip(this.hint, sx, sy);
       R.cv.style.cursor = 'var(--cur-crosshair)';
       return;
     }
@@ -335,9 +357,6 @@
       else if (!st) { const chk = M.checkSite(g.city, w.x, w.y, this.buildType); tip = chk.ok ? null : (this.lockTip(w, true) || { title: '不能在此建站', lines: [chk.msg], bad: true }); }
     } else if (this.tool === 'line') {
       tip = this.linePreviewTip(w, st, seg, mod);
-    } else if (this.tool === 'measure') {
-      if (st && net.stations[st]) { this.cursor.x = net.stations[st].x; this.cursor.y = net.stations[st].y; }   // 靠近车站时吸附
-      tip = this.measureTip();
     }
     if (this.tool === 'select' && !st) { const pin = R.pickTaskPin(sx, sy); if (pin) tip = { title: pin.title, lines: [pin.name, '点击查看任务'].filter(Boolean) }; }
     if (!tip && !st && !seg && this.tool === 'select') tip = CM.CityLink.hoverTip(g, w.x, w.y) || this.lockTip(w);
@@ -675,12 +694,22 @@
   Tools.prototype.onClick = function (sx, sy, mod, multiKey) {
     const g = this.game(), R = this.R;
     if (g.jumping) return;
-    if (this.tool === 'tripTime') {
-      const id = R.pickStation(sx, sy), s = g.net.stations[id], p = s || this.world(sx, sy, 0);
-      if (g.city.cellAt(p.x, p.y) < 0) return;
-      const point = { x: p.x, y: p.y, station: s ? id : null };
-      const points = this.tripTime.points;
-      this.setTripPoints(points.length === 1 ? [points[0], point] : [point]);
+    if (this.tool === 'select' && R.usesDevelopmentHistory?.()) {
+      const p = this.world(sx, sy, 0);
+      this.ui.pickDevelopmentParcel(p.x, p.y);
+      return;
+    }
+    if (this.tool === 'tripTime' || this.tool === 'measure') {
+      const point = this.groundPoint(sx, sy, this.tool === 'tripTime' ? g.net : this.net());
+      if (this.tool === 'tripTime' && g.city.cellAt(point.x, point.y) < 0) return;
+      if (this.tool === 'tripTime') {
+        const points = this.tripTime.points;
+        this.setTripPoints(points.length === 1 ? [points[0], point] : [point]);
+      } else {
+        const m = this.meas;
+        if (m.done) { m.pts = []; m.done = false; }
+        m.pts.push([point.x, point.y]); this.ui.renderToolOpts();
+      }
       sfx('soft');
       return;
     }
@@ -702,13 +731,6 @@
     // 多选：Ctrl / Shift + 点击车站或轨道（选择、修改工具）
     if (multiKey && (st || seg) && (this.tool === 'select' || this.tool === 'edit' || this.tool === 'demolish')) { ui.toggleMulti(st ? 'station' : 'seg', st || seg); this.updateHover(sx, sy, mod); return; }
     switch (this.tool) {
-      case 'measure': {
-        const m = this.meas, s = st && this.net().stations[st];
-        if (m.done) { m.pts = []; m.done = false; }
-        m.pts.push(s ? [s.x, s.y] : [w.x, w.y]);
-        sfx('soft'); ui.renderToolOpts();
-        break;
-      }
       case 'select': {
         if (!st && R.pickTaskPin(sx, sy)) { ui.taskTab = 'active'; ui.openPage('tasks', 'active', { root: true }); break; }
         // 设施图层中优先选中设施圆点；其余情况下道路优先，其次是重要设施的场地（v1.9），再次是片区
@@ -884,6 +906,7 @@
     const g = this.game(); if (!g) return;
     // 选择工具下双击车站：打开车站详情并直接编辑站名
     if (this.tool === 'select') {
+      if (this.R.usesDevelopmentHistory?.()) return;
       const st = this.R.pickStation(e.clientX, e.clientY);
       if (!st) return;
       const ui = this.ui; ui.select({ kind: 'station', id: st });

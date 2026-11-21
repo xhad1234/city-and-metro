@@ -167,7 +167,7 @@ def main(files):
         for name, data in SITES.items()
     }
     building_sites = [(name, geom) for name, geom in site_geometries.items()
-                      if SITES[name]['type'] in BUILDING_CAP and name != 'sh_songjiang_station']
+                      if SITES[name]['type'] in BUILDING_CAP and name != 'sh_songjiang_station' and not SITES[name].get('outlineOnly')]
     building_scan = Areas(sites=building_sites)
     for file in files:
         building_scan.apply_file(file, locations=True)
@@ -176,7 +176,10 @@ def main(files):
     for name, data in SITES.items():
         category = data['type']
         site = site_geometries[name]
-        if name == 'sh_songjiang_station':
+        if data.get('outlineOnly'):
+            layout = make_layout(project(site), category, [])
+            layout['outlineOnly'] = True
+        elif name == 'sh_songjiang_station':
             layout, legacy = songjiang(site)
             legacy.update({'id': 'sh_songjiang_south_hall', 'name': '原松江南站站房', 'from': 2010.75})
             layout['legacy'] = legacy

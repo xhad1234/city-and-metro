@@ -1357,8 +1357,19 @@
       if(best>limit)continue;const path=[];let v=end,guard=0;while(v>=0&&guard++<city.V){path.push([city.vx[v],city.vy[v]]);v=tree.pred.get(v)??-1;}path.reverse();path.unshift([from.x,from.y]);path.push([s.x,s.y]);links.push({station:s.id,metres:best,path});
     }return links;
   };
-  // 小区按步行或骑车接驳，重要设施按步行接驳。步行覆盖和站外换乘仍按步行距离计算。
+  // 小区及指定设施可步行或骑行接驳；步行覆盖、站外换乘和其他设施的特殊接驳另按原规则计算。
   const ACC_MAX = 6;   // 接驳组合缓存按每端 3 位编码（a << 3 | b），不能超过 8
+  // Shared access limits and generalized costs. Facility interiors remain on foot.
+  Model.accessChoice = function (walkM, bikeM, insideM = 0) {
+    const { mPerMin, maxAccessM } = CFG.walk, bike = CFG.bike, walkWeight = CFG.choice.walkW;
+    const speed = mPerMin * bike.speedRatio, inside = insideM / mPerMin;
+    const walkMin = walkM <= maxAccessM ? walkM / mPerMin + inside : Infinity;
+    const bikeMin = bikeM <= speed * bike.maxRideMin ? bikeM / speed + bike.startMin + inside : Infinity;
+    const cycling = bikeMin + bike.transferPenalty / walkWeight < walkMin;
+    const w = cycling ? bikeMin : walkMin;
+    return Number.isFinite(w) ? { w, bikeShare: cycling ? 1 : 0, walkable: Number.isFinite(walkMin),
+      cost: walkWeight * w + (cycling ? bike.transferPenalty : 0) } : null;
+  };
   // 车站详情按接驳成本互斥选择方式，覆盖时间只计实际接驳用时。
   // 步行树仍保持原有范围供行人和地图使用；详情单独读取已求出的完整骑行范围，不另跑路网搜索。
   Model.prototype.stationCoverage = function (k) {
@@ -1388,7 +1399,7 @@
     const city = this.city, walk = city.walk, VW = city.VW, N = C.stations.length;
     const maxM = CFG.walk.maxAccessM, xferM = CFG.walk.transferMaxM, extra = CFG.walk.cellExtraM, mpm = CFG.walk.mPerMin;
     const bike = CFG.bike, bikeSpeed = mpm * bike.speedRatio, bikeM = bikeSpeed * bike.maxRideMin;
-    const walkWeight = CFG.choice.walkW, bikePenaltyMin = bike.transferPenalty / walkWeight;
+    const walkWeight = CFG.choice.walkW;
     const accessRadius = Math.ceil(Math.max(maxM, bikeM) / CFG.CELL_M) + 1;
     const nC = city.N, Z = this.Z, fn = this.fn, F = fn ? fn.F : 0, NZ = Z + F;
     const cellWalk = new Float32Array(nC).fill(Infinity), cellStation = new Int32Array(nC).fill(-1);
@@ -1399,8 +1410,9 @@
     const pred = this._wpred || (this._wpred = new Int32Array(city.V));
     const touched = [];
     const heap = this.heap;
-    const zMap = new Map(), fMap = new Map(), eMap = new Map();
+    const zMap = new Map(), fMap = new Map(), eMap = new Map(), bikeMap = new Map();
     const cellFac = fn ? fn.cellFac : null, ringFac = fn ? fn.ringFac : null;
+    const facilityBike = fn ? Uint8Array.from(fn.list, f => CM.Fac.allowsBikeAccess(f)) : null;
     const trees = [], accessible = new Uint8Array(N), catchPop = new Float32Array(N), transfers = [];
     const walkLimit = Math.max(maxM, xferM) + 200;
     const limit = Math.max(walkLimit, bikeM);
@@ -1470,8 +1482,9 @@
           const v0 = j * VW + i;
           const cd = Math.min(D_[v0], D_[v0 + 1], D_[v0 + VW], D_[v0 + VW + 1]) + extra;
           const c = j * city.W + i;
-          const rl = cd <= maxM + extra && ringFac && ringFac.get(c);
+          const rl = ringFac && ringFac.get(c);
           if (rl) for (const f of rl) {
+            if (cd > (facilityBike[f] ? Math.max(maxM, bikeM) : maxM) + extra) continue;
             const entry = fn.list[f].entrance;
             let d0 = cd;
             if (entry) {
@@ -1480,9 +1493,14 @@
                 d0 = Math.min(d0, D_[v] + U.dist(entry[0], entry[1], city.vx[v], city.vy[v]) * CFG.CELL_M);
               }
             }
-            if (d0 > maxM) continue;
-            let m = eMap.get(f); if (!m) { m = new Map(); eMap.set(f, m); }
-            const prev = m.get(k); if (prev === undefined || d0 < prev) m.set(k, d0);
+            if (d0 <= maxM) {
+              let m = eMap.get(f); if (!m) { m = new Map(); eMap.set(f, m); }
+              const prev = m.get(k); if (prev === undefined || d0 < prev) m.set(k, d0);
+            }
+            if (facilityBike[f] && d0 <= bikeM) {
+              let m = bikeMap.get(f); if (!m) { m = new Map(); bikeMap.set(f, m); }
+              const prev = m.get(k); if (prev === undefined || d0 < prev) m.set(k, d0);
+            }
           }
           if (cd > maxM && cd > bikeM) continue;
           if (cd <= maxM) {
@@ -1500,13 +1518,11 @@
           if (cd <= 750) catchPop[k] += city.pop[c] + city.jobs[c];
           const z = city.zoneOf(c);
           let m = zMap.get(z); if (!m) { m = new Map(); zMap.set(z, m); }
-          const walkMin = cd <= maxM ? cd / mpm : Infinity;
-          const bikeMin = cd <= bikeM ? cd / bikeSpeed + bike.startMin : Infinity;
-          const cycling = bikeMin + bikePenaltyMin < walkMin;
+          const choice = Model.accessChoice(cd, cd);
           const e = m.get(k) || [0, 0, 0, 0];
           e[0] += w;
-          e[1] += w * (cycling ? bikeMin : walkMin);
-          if (cycling) e[2] += w;
+          e[1] += w * choice.w;
+          if (choice.bikeShare) e[2] += w;
           if (cd <= maxM) e[3] += w;
           m.set(k, e);
           cellAccess[c] = 1;
@@ -1618,7 +1634,17 @@
           em.set(s, Math.max(60, d));
         }
       }
-      if (em && em.size) {
+      const bm = bikeMap.get(k);
+      if (bm && bm.size) {
+        const arr = [], inn = fn.inner[k] + fn.reach[k];
+        const candidates = new Set([...(em ? em.keys() : []), ...bm.keys()]);
+        for (const s of candidates) {
+          const choice = Model.accessChoice(em?.get(s) ?? Infinity, bm.get(s) ?? Infinity, inn);
+          if (choice) arr.push({ s, ...choice, share: 1 });
+        }
+        arr.sort(accessCostOrder);
+        zl[Z + k] = arr.slice(0, ACC_MAX); zCov[Z + k] = 1; zWalk[Z + k] = arr[0].w;
+      } else if (em && em.size) {
         const arr = [], inn = fn.inner[k] + fn.reach[k];
         em.forEach(function (d, s) { arr.push({ s: s, w: (d + inn) / mpm, share: 1 }); });
         arr.sort(function (a, b) { return a.w - b.w; });
@@ -1641,7 +1667,6 @@
       }
     }
     // 人口覆盖率
-    let pc = 0, pt = 0;
     // 枢纽旅客的接驳车站（v2.9）：各小区中心直线 hubFeed.km 以内最近的运营车站（打车或坐公交过去），供 odOrigin 计算
     const HF = CFG.choice.hubFeed, zFeedS = new Int32Array(Z).fill(-1), zFeedD = new Float32Array(Z);
     if (HF && this.zCx) {
@@ -1653,8 +1678,17 @@
         if (bs2 >= 0) { zFeedS[z] = bs2; zFeedD[z] = bd * kmC; }
       }
     }
-    for (let c = 0; c < nC; c++) { pt += city.pop[c]; if (cellWalk[c] <= maxM) pc += city.pop[c]; }
-    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalkCov: zWalkCov, zWalk: zWalk, trees: trees, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: pt > 0 ? pc / pt : 0, zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
+    return { cellWalk: cellWalk, cellStation: cellStation, zl: zl, zCov: zCov, zWalkCov: zWalkCov, zWalk: zWalk, trees: trees, accessible: accessible, catchPop: catchPop, transfers: transfers, coverage: this.walkPopulationCoverage(cellWalk), zFeedS: zFeedS, zFeedD: zFeedD, NZ: NZ, facKey: fn ? fn.key : '' };
+  };
+
+  Model.prototype.walkPopulationCoverage = function (cellWalk) {
+    const pop = this.city.pop, maxM = CFG.walk.maxAccessM;
+    let total = 0, covered = 0;
+    for (let c = 0; c < pop.length; c++) {
+      total += pop[c];
+      if (cellWalk[c] <= maxM) covered += pop[c];
+    }
+    return total > 0 ? covered / total : 0;
   };
 
   Model.prototype.buildMetro = function (C, acc0) {
@@ -1882,17 +1916,15 @@
   };
 
   // ---------------- 单时段迭代 ----------------
-  Model.prototype.metroSkim = function* (net, P, p, prm, store) {
-    const N = net.N, nn = net.nNodes, nE = net.nE;
-    let key=skimKeys.get(net);if(key===undefined){key=++skimSerial;skimKeys.set(net,key);}
-    let work = store.work;
-    if (!work || work.cost.length !== nE || work.dist.length !== nn || work.open.length !== N) { store.valid=false; work = store.work = { cost: new Float32Array(nE), tAct: new Float32Array(nE), dist: new Float64Array(nn), dtm: new Float32Array(nn), dkm: new Float32Array(nn), open: new Uint8Array(N) }; }
+  // 客流分配与交通时间工具共用同一组边成本、实际用时和停运规则。
+  function metroEdgeCosts(net, P, prm, work) {
+    const N = net.N, nE = net.nE;
     const cost = work.cost, tAct = work.tAct, open = work.open;
     // 本时段没有列车的路线不能乘坐（代价 INF，最短路走不通，不是长时间候车）：按各方向的频率判断。环线只停一个方向时，停的方向不能乘车，另一个方向照常；
     // 没有任何路线开行的车站这一时段关站，不能进出，也不能借站外换乘穿过
     open.fill(0);
     for (let r = 0; r < net.R; r++) if (Model.boardFreq(P, net, r) > 0) for (const s of net.C.routes[r].stIdx) open[s] = 1;
-    let same=store.valid&&store.skimKey===key&&store.transferPen===prm.xpen;store.valid=false;
+    let same = true;
     for (let e = 0; e < nE; e++) {
       const before=cost[e],beforeT=tAct[e];cost[e]=0;tAct[e]=0;
       const ty = net.eType[e], r = net.eRoute[e];
@@ -1923,6 +1955,16 @@
       }
       if(before!==cost[e]||beforeT!==tAct[e])same=false;
     }
+    return same;
+  }
+  Model.prototype.metroSkim = function* (net, P, p, prm, store) {
+    const N = net.N, nn = net.nNodes, nE = net.nE;
+    let key=skimKeys.get(net);if(key===undefined){key=++skimSerial;skimKeys.set(net,key);}
+    let work = store.work;
+    if (!work || work.cost.length !== nE || work.dist.length !== nn || work.open.length !== N) { store.valid=false; work = store.work = { cost: new Float32Array(nE), tAct: new Float32Array(nE), dist: new Float64Array(nn), dtm: new Float32Array(nn), dkm: new Float32Array(nn), open: new Uint8Array(N) }; }
+    const cost = work.cost, tAct = work.tAct;
+    const same = metroEdgeCosts(net, P, prm, work) && store.valid && store.skimKey === key && store.transferPen === prm.xpen;
+    store.valid = false;
     if(same){store.valid=true;return;}
     // 中途取消的生成器不能把只完成一部分的最短路当成有效缓存。
     store.valid=false;
@@ -2683,7 +2725,7 @@
     const net = this.net, city = this.city, C = net.C;
     if (point.station != null) {
       const s = C.sIndex.get(point.station);
-      return s != null && C.serviced[s] ? [{ s, mode: 'station', minutes: 0, metres: 0 }] : [];
+      return s != null && C.serviced[s] ? [{ s, mode: 'station', minutes: 0, metres: 0, cost: 0 }] : [];
     }
     const cell = city.cellAt(point.x, point.y);
     if (cell < 0 || city.waterDistAt(point.x, point.y) < 0) return [];
@@ -2708,11 +2750,10 @@
         if (distance < metres) { metres = distance; corner = c.v; }
       }
       if (metres > max) continue;
-      const walk = metres <= maxAccessM ? metres / mPerMin : Infinity;
-      const cycle = metres <= maxBike ? metres / bikeSpeed + bike.startMin : Infinity;
-      result.push({ s, mode: cycle < walk ? 'bike' : 'walk', minutes: Math.min(walk, cycle), metres, corner });
+      const choice = Model.accessChoice(metres, metres);
+      if (choice) result.push({ s, mode: choice.bikeShare ? 'bike' : 'walk', minutes: choice.w, cost: choice.cost, metres, corner });
     }
-    return result;
+    return result.sort((a, b) => a.cost - b.cost).slice(0, ACC_MAX);
   };
   // 仅还原每个时段最终选中的地面路径，直接使用接驳树记录的前驱。
   function tripGroundPath(city, net, s, corner, point) {
@@ -2729,106 +2770,84 @@
     path.push([station.x, station.y]);
     return path.reverse();
   }
-  // 在既有站厅、站台、换乘通道和站外换乘图上做多源最短路。上车与首段乘车一起入堆，
-  // 因而候车后必须实际乘车。列车状态再分两个方向，环线只等所选方向的列车。
-  function tripInPeriod(city, net, P, starts, ends, from, to) {
-    const { C, nNodes, eTo, eT0, eType, eRoute, eSt, eLeg, eDir, outStart, outEdge } = net;
-    const freq = C.routes.map((rt, r) => [Model.dirFreq(P, net, r, 0), Model.dirFreq(P, net, r, 1)]);
-    const open = new Uint8Array(net.N);
-    for (const rt of C.routes) if (freq[rt.id].some(f => f > 0)) for (const s of rt.stIdx) open[s] = 1;
-    const targets = new Map(ends.filter(a => open[a.s]).map(a => [a.s, a]));
-    if (!targets.size) return null;
-    const dist = new Float64Array(3 * nNodes).fill(Infinity), prev = [], heap = new U.Heap(nNodes);
-    const trainNode = (e, d) => (d + 1) * nNodes + eTo[e];
-    function relax(v, time, u, edge, board, start) {
-      if (time >= dist[v]) return;
-      dist[v] = time;
-      prev[v] = { u, edge, board, start };
-      heap.push(time, v);
-    }
-    function board(r, k, walk, u, time, start) {
-      const rt = C.routes[r], n = rt.stIdx.length, s = rt.stIdx[k];
-      for (let dir = 0; dir < 2; dir++) {
-        const f = freq[r][dir];
-        if (!(f > 0) || (!rt.loop && (dir ? k === 0 : k === n - 1))) continue;
-        const leg = dir ? (k + n - 1) % n : k;
-        const edge = net.rideEdge[r][2 * leg + dir];
-        const wait = 30 / Math.max(0.5, f) + (P.stDelay[s] || 0) * 0.5;
-        relax(trainNode(edge, dir), time + walk + wait + eT0[edge], u, edge, { s, walk, wait }, start);
-      }
-    }
-    for (const a of starts) for (const r of C.stationRoutes[a.s]) {
-      const rt = C.routes[r], k = rt.stIdx.indexOf(a.s);
-      board(r, k, rt.lvPen[k] ? CFG.metro.levelXferMin : 0, -1, a.minutes, a);
-    }
-    let best = Infinity, arrival = -1, endAccess, endPlatformMin;
-    while (heap.n) {
-      const u = heap.pop(), time = heap.lastKey;
-      if (time >= best) break;
-      if (time > dist[u]) continue;
-      const node = u % nNodes, dir = Math.floor(u / nNodes) - 1;
-      for (let k = outStart[node]; k < outStart[node + 1]; k++) {
-        const e = outEdge[k], type = eType[e], to = eTo[e], r = eRoute[e];
-        if (type === 0) board(r, eLeg[e], eT0[e], u, time);
-        else if (type === 2) {
-          if (dir === eDir[e]) relax(trainNode(e, dir), time + eT0[e], u, e);
-        } else {
-          const next = time + eT0[e];
-          const end = type === 1 ? targets.get(eSt[e]) : null;
-          if (end && next + end.minutes < best) {
-            arrival = u; best = next + end.minutes;
-            endAccess = end; endPlatformMin = eT0[e];
-          }
-          if ((type !== 3 || open[to]) && (type !== 4 || freq[r].some(f => f > 0))) relax(to, next, u, e);
+  // 与客流分配复用 metroTree 和接驳站对的成本比较，不另建「最快用时」图。
+  // 仅搜索起点的几个候选站；实际用时与广义成本分别记录。
+  function tripInPeriod(model, P, starts, ends, from, to) {
+    const city = model.city, net = model.net, prm = model.params();
+    const { C, N, nNodes, nE, eT0, eType, eRoute, eSt, eLeg, eDir, eFrom } = net;
+    let query = model._tripRouting;
+    if (!query || query.net !== net) query = model._tripRouting = {
+      net, heap: new U.Heap(nNodes),
+      work: { cost: new Float32Array(nE), tAct: new Float32Array(nE), open: new Uint8Array(N),
+        dist: new Float64Array(nNodes), dtm: new Float32Array(nNodes), dkm: new Float32Array(nNodes) },
+      store: { gt: new Float32Array(N), tm: new Float32Array(N), km: new Float32Array(N),
+        pred: new Int32Array(nNodes), order: new Int32Array(nNodes), nOrd: new Int32Array(1) },
+    };
+    const { work, store, heap } = query;
+    metroEdgeCosts(net, P, prm, work);
+    let best = INF, startAccess, endAccess, path;
+    for (const a of starts) {
+      if (!work.open[a.s]) continue;
+      metroTree(net, work.cost, work.tAct, a.s, work, store, heap, prm.xpen, a.s);
+      for (const b of ends) {
+        if (a.s === b.s || store.gt[b.s] >= INF) continue;
+        const cost = a.cost + b.cost + store.gt[b.s];
+        if (cost >= best) continue;
+        const edges = [];
+        for (let node = net.exits[b.s]; node !== a.s;) {
+          const edge = store.pred[node]; edges.push(edge); node = eFrom[edge];
         }
+        best = cost; startAccess = a; endAccess = b; path = edges.reverse();
       }
     }
-    if (arrival < 0) return null;
-    const path = [];
-    for (let u = arrival; u >= 0; u = prev[u].u) path.push(prev[u]);
-    path.reverse();
+    if (!path) return null;
     const sections = [];
     const mpm = CFG.walk.mPerMin;
-    const connection = (kind, a, point, platformMin) => {
+    let ride = null, walk = 0, indoorMin = 0, outsideMetres = 0, outside = false, paths = [];
+    const connection = (kind, a, point, station) => {
       const path = tripGroundPath(city, net, a.s, a.corner, point);
       if (path && kind === 'access') path.reverse();
-      return { kind, s: a.s, mode: a.mode, minutes: a.minutes + platformMin, metres: a.metres + platformMin * mpm,
-        estimatedDistance: platformMin > 0, paths: path ? [path] : [] };
+      const ground = path ? [path] : [];
+      return { kind, s: station, mode: a.mode === 'station' && outsideMetres > 0 ? 'walk' : a.mode, minutes: a.minutes + walk,
+        metres: a.metres + outsideMetres + indoorMin * mpm, estimatedDistance: indoorMin > 0,
+        paths: kind === 'access' ? ground.concat(paths) : paths.concat(ground) };
     };
-    let ride = null, walk = 0, indoorMin = 0, outsideMetres = 0, outside = false, paths = [];
-    for (const { edge, board, start } of path) {
-      if (board) {
-        walk += board.walk; indoorMin += board.walk;
-        if (start) {
-          sections.push(connection('access', start, from, indoorMin));
-          sections.push({ kind: 'wait', s: board.s, minutes: board.wait, metres: 0 });
+    for (const edge of path) {
+      const type = eType[edge];
+      if (type === 0) {
+        walk += eT0[edge]; indoorMin += eT0[edge];
+        const station = eSt[edge], wait = work.tAct[edge] - eT0[edge];
+        if (!ride) {
+          sections.push(connection('access', startAccess, from, station));
+          sections.push({ kind: 'wait', s: station, minutes: wait, metres: 0 });
         } else {
-          sections.push({ kind: 'transfer', from: ride.to, to: board.s, outside, walk, wait: board.wait, minutes: walk + board.wait,
+          sections.push({ kind: 'transfer', from: ride.to, to: station, outside, walk, wait, minutes: walk + wait,
             metres: outsideMetres + indoorMin * mpm, estimatedDistance: indoorMin > 0, paths });
         }
         walk = 0; indoorMin = 0; outsideMetres = 0; outside = false; paths = [];
-        ride = { kind: 'ride', r: eRoute[edge], dir: eDir[edge], from: board.s, to: board.s, first: eLeg[edge], last: eLeg[edge], stops: 0, minutes: 0, metres: 0 };
+        ride = { kind: 'ride', r: eRoute[edge], dir: 0, from: station, to: station, first: -1, last: -1, stops: 0, minutes: 0, metres: 0 };
         sections.push(ride);
-      }
-      if (eType[edge] === 2) {
+      } else if (type === 2) {
         const rt = C.routes[ride.r];
-        ride.last = eLeg[edge]; ride.stops++; ride.minutes += eT0[edge];
+        if (!ride.stops) { ride.first = eLeg[edge]; ride.dir = eDir[edge]; }
+        ride.last = eLeg[edge]; ride.stops++; ride.minutes += work.tAct[edge];
         ride.metres += rt.legLenM[ride.last];
         ride.to = rt.stIdx[(ride.last + (ride.dir ? 0 : 1)) % rt.stIdx.length];
       } else {
-        walk += eT0[edge];
-        if (eType[edge] === 3) {
+        walk += work.tAct[edge];
+        if (type === 3) {
           outside = true;
           outsideMetres += net.eWm[edge];
           const u = net.eFrom[edge], a = u < net.N ? u : net.exits.indexOf(u), b = eSt[edge];
           const link = net.acc.transfers.find(tr => tr.a === a && tr.b === b);
           const path = tripGroundPath(city, net, a, link?.corner, C.stations[b]);
           if (path) paths.push(path);
-        } else indoorMin += eT0[edge];
+        } else indoorMin += work.tAct[edge];
       }
     }
-    sections.push(connection('egress', endAccess, to, endPlatformMin));
-    return { total: best, metres: sections.reduce((sum, section) => sum + section.metres, 0),
+    sections.push(connection('egress', endAccess, to, ride.to));
+    return { total: sections.reduce((sum, section) => sum + section.minutes, 0), cost: best,
+      metres: sections.reduce((sum, section) => sum + section.metres, 0),
       estimatedDistance: sections.some(section => section.estimatedDistance), sections };
   }
   Model.prototype.tripTime = function (from, to) {
@@ -2839,7 +2858,153 @@
     if (!start.length || !end.length) return { status: !start.length && !end.length ? 'both' : !start.length ? 'start' : 'end' };
     // 工作日四个典型时段。读取正式运营数据，不触发全城重算。
     const per = this.ctxs.wd.per;
-    return { status: 'ready', periods: CFG.periods.map((_, p) => tripInPeriod(this.city, net, per[p], start, end, from, to)) };
+    return { status: 'ready', periods: CFG.periods.map((_, p) => tripInPeriod(this, per[p], start, end, from, to)) };
+  };
+  // 城市发展使用平峰计划班次。每座站只搜索一次 45 分钟内的站间路径，
+  // 岗位与设施变化时直接重算目的地价值，无需重跑路径。
+  Model.prototype.developmentTravelTimes = function (net, freq, limit) {
+    const cached = this._developmentTravel;
+    const transfers = net.acc.transfers;
+    if (cached && cached.compiled === net.C && cached.limit === limit && freq.every((f, i) => f === cached.freq[i]) &&
+        transfers.length === cached.transfers.length && transfers.every((t, i) => {
+          const old = cached.transfers[i];
+          return t.a === old.a && t.b === old.b && t.m === old.m;
+        })) return cached.times;
+    const { C, N, R, nNodes, eFrom, eTo, eType, eRoute, eLeg, eDir, eSt, eT0 } = net;
+    const open = new Uint8Array(N), links = new Array(nNodes * 3);
+    const link = (from, to, minutes, arrival = -1) => (links[from] ||= []).push({ to, minutes, arrival });
+    for (let r = 0; r < R; r++) {
+      if (freq[2 * r] || freq[2 * r + 1]) for (const s of C.routes[r].stIdx) open[s] = 1;
+    }
+    const platformEnd = net.platBase[R - 1] + C.routes[R - 1].stIdx.length;
+    for (let e = 0; e < net.nE; e++) {
+      const from = eFrom[e], to = eTo[e], type = eType[e], minutes = eT0[e];
+      if (type === 0) {
+        const r = eRoute[e], k = eLeg[e], rt = C.routes[r], n = rt.stIdx.length;
+        for (let dir = 0; dir < 2; dir++) {
+          const f = freq[2 * r + dir];
+          if (f <= 0 || (!rt.loop && (dir ? k === 0 : k === n - 1))) continue;
+          const leg = dir ? (k + n - 1) % n : k;
+          const ride = net.rideEdge[r][2 * leg + dir];
+          link(from, (dir + 1) * nNodes + eTo[ride], minutes + 30 / f + eT0[ride]);
+        }
+      } else if (type === 2) {
+        const offset = (eDir[e] + 1) * nNodes;
+        link(from + offset, to + offset, minutes);
+      } else if (from >= N && from < platformEnd) {
+        // 只有乘车后离开站台才算到达。步行换乘通道可以继续接驳下一班列车。
+        const arrival = type === 1 ? eSt[e] : -1;
+        link(from + nNodes, to, minutes, arrival);
+        link(from + 2 * nNodes, to, minutes, arrival);
+      } else if (type !== 3 || open[to]) {
+        link(from, to, minutes);
+      }
+    }
+    const times = new Float32Array(N * N), dist = new Float64Array(links.length), heap = new U.Heap(nNodes);
+    for (let s = 0; s < N; s++) {
+      if (!open[s]) continue;
+      dist.fill(Infinity);
+      heap.clear();
+      dist[s] = 0;
+      heap.push(0, s);
+      while (heap.n) {
+        const u = heap.pop(), elapsed = heap.lastKey;
+        if (elapsed > dist[u] || !links[u]) continue;
+        for (const edge of links[u]) {
+          const next = elapsed + edge.minutes;
+          if (next >= limit) continue;
+          if (edge.arrival >= 0 && edge.arrival !== s) {
+            const k = s * N + edge.arrival;
+            if (!times[k] || next < times[k]) times[k] = next;
+          }
+          if (next >= dist[edge.to]) continue;
+          dist[edge.to] = next;
+          heap.push(next, edge.to);
+        }
+      }
+    }
+    this._developmentTravel = { compiled: C, limit, freq, transfers, times };
+    return times;
+  };
+  const developmentFacilityGroup = { rail: 0, air: 0, shop: 1, cbd: 1, venue: 1, uni: 2, hosp: 3, library: 4, stadium: 4, park: 4, scenic: 4 };
+  Model.prototype.developmentAccess = function (year, rules) {
+    const net = this.net, { C, N, R, acc } = net, city = this.city, LU = CM.LU;
+    const fleet = this.fleetOf(net), freq = new Float32Array(2 * R), lines = Array.from({ length: N }, () => new Set());
+    for (let r = 0; r < R; r++) {
+      const rt = C.routes[r], plan = fleet && fleet[r];
+      for (let dir = 0; dir < 2; dir++) {
+        freq[2 * r + dir] = plan ? Model.fleetFrequency(rt, plan, rt.loop ? dir : 0, 1, CFG.metro.fMax) : Model.serviceFloor(rt, 1);
+      }
+      const running = !plan || plan.avail.some((n, dir) => n > 0 && (!plan.manual || plan.manual[dir].some(value => value > 0)));
+      if (running) for (const s of rt.stIdx) lines[s].add(rt.lineId);
+    }
+    const times = R ? this.developmentTravelTimes(net, freq, rules.reachMinutes) : null;
+    // 保留最近一次完整的周平均到访。设施启停以本月状态为准；等待交通刷新时仍可使用已有设施的数据。
+    const wd = this.facData('wd'), we = this.facData('we'), weights = CFG.trips.weekWeights;
+    if (wd && we && this._developmentVisits?.source !== wd.inn) {
+      const byId = new Map(this.fn.list.map((f, i) => [f.id, wd.inn[i] * weights.wd + we.inn[i] * weights.we]));
+      this._developmentVisits = { source: wd.inn, byId };
+    }
+    const byZone = new Map(), visits = this._developmentVisits?.byId;
+    for (const f of CM.Fac.list(city)) {
+      const group = developmentFacilityGroup[f.t], count = visits?.get(f.id);
+      if (group == null || !count || f.ext || !CM.Fac.active(f, year, city)) continue;
+      const cell = city.cellAt(...(f.entrance || [f.x, f.y]));
+      if (cell < 0) continue;
+      const z = city.zoneOf(cell);
+      if (!byZone.has(z)) byZone.set(z, []);
+      byZone.get(z).push({ cell, group, count });
+    }
+    const zones = new Int32Array(N).fill(-1), value = new Float64Array(N), walk = new Float64Array(N), rail = new Float64Array(N);
+    const dist = new Float32Array(city.V).fill(Infinity), { maxAccessM, cellExtraM } = CFG.walk, VW = city.VW;
+    const idealWalk = Math.PI * (maxAccessM / CFG.CELL_M) ** 2 / 3;
+    const withinWalk = cell => {
+      const v = cell % city.W + Math.floor(cell / city.W) * VW;
+      return Math.min(dist[v], dist[v + 1], dist[v + VW], dist[v + VW + 1]) + cellExtraM <= maxAccessM;
+    };
+    for (let s = 0; s < N; s++) {
+      const st = C.stations[s], cell = city.cellAt(st.x, st.y), tree = acc.trees[s];
+      if (cell < 0 || !lines[s].size) continue;
+      const zone = zones[s] = city.zoneOf(cell);
+      if (!tree) continue;
+      let walkSum = 0, jobs = 0, potential = 0;
+      const facilities = new Float64Array(5);
+      for (let i = 0; i < tree.verts.length; i++) {
+        const d = tree.dist[i];
+        dist[tree.verts[i]] = d;
+        walkSum += Math.max(0, 1 - d / maxAccessM);
+      }
+      for (const c of this.zoneCells[zone]) {
+        if (!withinWalk(c)) continue;
+        jobs += city.jobs[c]; // 园区通勤已由所在格岗位代表。
+        const land = city.lu[c] === LU.RURAL ? city.plan[c] : city.lu[c];
+        if (city.regionOpen[city.region[c]] && (land === LU.RES || land === LU.MIX || land === LU.COM || land === LU.IND)) potential = 0.20;
+      }
+      for (const f of byZone.get(zone) || []) if (withinWalk(f.cell)) facilities[f.group] += f.count;
+      value[s] = potential + Math.min(4, 4 * Math.sqrt(jobs / rules.jobsFull));
+      for (const n of facilities) value[s] += 4 * n / (n + rules.facilityMid);
+      walk[s] = Math.min(1, walkSum / idealWalk);
+      for (const v of tree.verts) dist[v] = Infinity;
+    }
+    if (times) {
+      const best = new Float64Array(this.Z), seen = new Int32Array(this.Z).fill(-1);
+      for (let s = 0; s < N; s++) {
+        if (zones[s] < 0) continue;
+        let total = 0;
+        for (let d = 0; d < N; d++) {
+          const time = times[s * N + d], zone = zones[d];
+          if (!time || zone < 0 || zone === zones[s]) continue;
+          const score = value[d] * (1 - time / rules.reachMinutes);
+          const prev = seen[zone] === s ? best[zone] : 0;
+          if (score <= prev) continue;
+          total += score - prev;
+          best[zone] = score;
+          seen[zone] = s;
+        }
+        rail[s] = Math.min(1, total / rules.railFull);
+      }
+    }
+    return { rail, walk, lines: lines.map(line => line.size) };
   };
   // 区间满载率（画面用）：没有列车运行的区间没有运力，不算满载
   Model.sectionLF = function (load, f, cap) { const c = f * cap; return c >= 1 ? (load || 0) / c : 0; };

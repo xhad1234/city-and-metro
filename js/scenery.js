@@ -182,7 +182,7 @@
     }
     for (const f of Fac.list(city)) {
       if (f.layout && Fac.active(f, yr, city)) {
-        out.push(mapped(f.id, f.name, f.layout));
+        if (!f.layout.outlineOnly) out.push(mapped(f.id, f.name, f.layout));
         continue;
       }
       if (f.lmK >= 0 || f.ext || f.noModel || !FAC_KIND[f.t] || !Fac.active(f, yr, city)) continue;

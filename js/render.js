@@ -87,6 +87,7 @@
     this.overview = null; this.overviewStale = true; this.overviewAt = 0;
     this.frame = 0; this.time = 0;
     this.layer = 'none'; this.layerOpt = { shareDt: 'wd', cong: 'now', flow: 'all', station: 'all', stView: 'flow', stDt: 'avg', cover: 'time', facP: 'all', facDt: 'wd', gapDt: 'wd', devK: 'pop', devB: 'era' };
+    this.resetDevelopmentWindows();
     this.heat = null; this.heatKey = '';
     this.bFade = 0; this.roadVer = -1;
     this.labelsOn = true;
@@ -592,6 +593,7 @@
 
   Renderer.prototype.setGame = function (g) {
     this.game = g;
+    this.resetDevelopmentWindows();
     this._facS = null;   // 设施图层的显示缓存属于上一座城市：不清掉时上一城的设施会画在新城市的地图上
     this._sitePlans=new WeakMap();this._siteStamp=null;
     this.displayedLevel = this.requestedLevel = null;
@@ -988,7 +990,7 @@
     // 场地底色先画，随后保留水系、铁路与道路的原始显示。
     for (let k = 0; k < D.landmarks.length; k++) {
       const lm = D.landmarks[k];
-      if (city.landmarkOn[k] && CM.Sites.complex(lm) && inBox([lm.x - Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.y - Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.x + Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.y + Math.hypot(lm.w, lm.d) / CFG.CELL_M], 0)) this.drawSiteFloor(ctx, lm);
+      if (city.landmarkOn[k] && !lm.measuredSite && CM.Sites.complex(lm) && inBox([lm.x - Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.y - Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.x + Math.hypot(lm.w, lm.d) / CFG.CELL_M, lm.y + Math.hypot(lm.w, lm.d) / CFG.CELL_M], 0)) this.drawSiteFloor(ctx, lm);
     }
     // 水系（真实岸线）
     const wpth = new Path2D(), bankPath = new Path2D();
@@ -2774,7 +2776,69 @@
     if (sum > 0) for (let c = 0; c < out.length; c++) out[c] *= total / sum;
     return out;
   };
+  Renderer.prototype.resetDevelopmentWindows = function () {
+    this.developmentWindows = { pop: { months: 3, metric: 'rate' }, jobs: { months: 3, metric: 'rate' } };
+    this.layerOpt.growthCell = null;
+  };
+
+  Renderer.prototype.usesDevelopmentHistory = function () {
+    const kind = this.layerOpt.devK;
+    return this.layer === 'dev' && (kind === 'pop' || kind === 'jobs');
+  };
+
+  Renderer.prototype.developmentWindow = function () {
+    const kind = this.layerOpt.devK, settings = this.developmentWindows[kind];
+    const history = kind === 'jobs' ? this.game?.jobsHistory : this.game?.populationHistory;
+    const range = settings && history?.window(settings.months, settings.start, settings.end);
+    return range && { ...range, history, settings };
+  };
+
+  Renderer.prototype.buildDevelopmentHistoryHeat = function () {
+    const city = this.game.city, H = CM.DevelopmentHistory, kind = this.layerOpt.devK;
+    const range = this.developmentWindow();
+    const mode = this.developmentWindows[kind].metric;
+    const key = 'devHistory:' + kind + ':' + this.themeName + ':' + AX.flag() + ':' + city.geoVer + ':' + mode + ':' +
+      (range ? H.key(range.start) + ':' + H.key(range.end) : '');
+    const cached = this.heatLayers.get('devHistory');
+    if (this.devLabels?.length) this.devLabels = [];
+    if (cached?.key === key) { this.heat = cached.cv; this.heatKey = key; return; }
+    // Two pixels per axis let parcels that grow from zero carry a stripe at close zoom.
+    const W = city.W * 2, height = city.H * 2;
+    const cv = cached?.cv || makeCanvas(W, height), ctx = cv.getContext('2d');
+    const img = ctx.createImageData(W, height), data = img.data;
+    if (range && range.start !== range.end) {
+      const before = range.history.values(range.start), after = range.history.values(range.end);
+      const colors = Object.fromEntries(Object.entries(H.colors).map(([id, hex]) => [id, AX.rgb(U.hex2rgb(hex))]));
+      const scale = H.scale[mode];
+      for (let y = 0; y < city.H; y++) for (let x = 0; x < city.W; x++) {
+        const p0 = H.at(before, x, y), p1 = H.at(after, x, y);
+        const delta = p1 - p0;
+        let color, opacity, stripe = false;
+        if (p0 < 0 || p1 < 0) {
+          if (city.landFrac[y * city.W + x] < 0.3) continue;
+          color = colors.unknown; opacity = 38;
+        } else if (delta && p0 === 0) {
+          color = colors.gain; opacity = 105 + 45 * Math.min(1, delta / 50); stripe = true;
+        } else if (delta) {
+          color = delta > 0 ? colors.gain : colors.loss;
+          const intensity = Math.sqrt(Math.min(1, Math.abs(mode === 'net' ? delta : delta / p0) / scale));
+          const small = p0 < 20 ? Math.min(1, 0.3 + Math.abs(delta) / 14) : 1;
+          opacity = (28 + 126 * intensity) * small;
+        } else continue;
+        for (let j = 0; j < 2; j++) for (let i = 0; i < 2; i++) {
+          const o = ((y * 2 + j) * W + x * 2 + i) * 4;
+          data[o] = color[0]; data[o + 1] = color[1]; data[o + 2] = color[2];
+          data[o + 3] = stripe && i !== j ? opacity * 0.45 : opacity;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    this.heatLayers.set('devHistory', { key, cv });
+    this.heat = cv; this.heatKey = key;
+  };
+
   Renderer.prototype.buildHeat = function () {
+    if (this.usesDevelopmentHistory()) return this.buildDevelopmentHistoryHeat();
     const g = this.game, city = g.city, model = g.model, W = city.W, H = city.H, LO = this.layerOpt, lay = this.layer;
     const access = lay === 'cover' || lay === 'gap' ? model.net : null;
     const dyn = lay === 'fac' || lay === 'gap' || lay === 'commute' || lay === 'mshare';
@@ -2836,15 +2900,15 @@
         return wt > 0.001 ? sum / wt : -1;
       };
     }
-    // 城市发展（v2.2）：与本阶段开始（或本局开始）相比，每约 1 km 方块的人口、岗位或已开发用地的增减（按方块面积折算为密度变化）
+    // 新用地：与本阶段开始或本局开始相比，每约 1 km 方块的已开发用地增减
     // v2.3：色标随实际变化自适应（取变化最大的 5% 方块为满色），刚开始的几个月也看得见；方块值按双线性插值铺到各格，不再是生硬的方格；
     // 还没有可见变化时改为显示本阶段的重点发展片区（见 devPlan）
     const pullV = lay === 'dev' && LO.devK === 'pull';   // 地铁带动（v2.3）：车站对周边增长的吸引，见 Game.metroPull
     const pull = pullV && g.metroPull ? g.metroPull() : null;
     this.devPull = pullV ? pull : null;
     const dv = lay === 'dev' && !pullV && CM.Eras ? CM.Eras.change(g, LO.devB, LO.devK) : null;
-    const devRamp = LO.devK === 'jobs' ? [[0, [196, 214, 250]], [0.5, [92, 132, 230]], [1, [40, 70, 190]]] : LO.devK === 'land' ? [[0, [250, 226, 170]], [0.5, [226, 160, 60]], [1, [176, 96, 20]]] : [[0, [200, 236, 210]], [0.5, [72, 178, 120]], [1, [20, 120, 70]]];
-    const devFloor = LO.devK === 'land' ? 0.05 : 300;
+    const devRamp = [[0, [250, 226, 170]], [0.5, [226, 160, 60]], [1, [176, 96, 20]]];
+    const devFloor = 0.05;
     let devFull = devFloor, devMin = devFloor / 4;
     if (dv) {
       const a = []; for (const v of dv.v) if (Math.abs(v) > 1e-6) a.push(Math.abs(v));
@@ -3039,9 +3103,17 @@
     if (layerOn && ['pop', 'jobs', 'cover', 'region', 'fac', 'gap', 'dev', 'commute', 'mshare'].indexOf(this.layer) >= 0) {
       this.buildHeat();
       setWorld();
-      ctx.imageSmoothingEnabled = true;
+      const growth = this.usesDevelopmentHistory();
+      ctx.imageSmoothingEnabled = !growth;
       ctx.globalAlpha = 1;
       ctx.drawImage(this.heat, 0, 0, CFG.W, CFG.H);
+      if (growth && this.layerOpt.growthCell != null) {
+        const c = this.layerOpt.growthCell, x = c % CFG.W, y = Math.floor(c / CFG.W);
+        ctx.strokeStyle = AX.color(CM.DevelopmentHistory.colors.gain);
+        ctx.lineWidth = 2 / Math.max(1, this.z);
+        ctx.strokeRect(x, y, 1, 1);
+      }
+      ctx.imageSmoothingEnabled = true;
       ctx.globalAlpha = 1;
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -3130,6 +3202,7 @@
     if (CM.Settings.get('taskPins') && !g.preview) this.drawTaskPins(ctx);
     if (this.layer === 'gap') this.drawGapOverload(ctx);
     if (this.layer === 'fac' || this.layer === 'gap') this.drawFacilities(ctx);
+    this.drawFacilityOutline(ctx, ui);
     if (this.fx.length) this.drawFx(ctx, dt);
     if (under < 0.5) this.drawAtmosphere(ctx);
     // ---- 标注 ----
@@ -5197,6 +5270,28 @@
     }
     ctx.restore();
   };
+  Renderer.prototype.drawFacilityOutline = function (ctx, ui) {
+    if (!ui || !CM.Fac) return;
+    const top = ui.stack && ui.stack[ui.stack.length - 1];
+    const sel = top && top.kind === 'facility' ? top : ui.selection;
+    if (!sel || sel.kind !== 'facility') return;
+    const f = CM.Fac.byId(sel.id); if (!f || f.ext) return;
+    const g = this.game, yr = g.year ? g.year() : g.clock.y + ((g.clock.m || 1) - 1) / 12;
+    const polygons = CM.Fac.footprint(f, yr);
+    ctx.save(); ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.setLineDash([]);
+    ctx.beginPath();
+    for (const polygon of polygons) for (const ring of polygon) {
+      ring.forEach(([x, y], i) => { const p = this.P(x, y, 0); if (i) ctx.lineTo(p.x, p.y); else ctx.moveTo(p.x, p.y); });
+      ctx.closePath();
+    }
+    ctx.strokeStyle = this.th.halo; ctx.lineWidth = 5; ctx.stroke();
+    ctx.strokeStyle = '#1676d2'; ctx.lineWidth = 2.5; ctx.stroke();
+    // 没有核实地块时只标设施接驳点，不画圆形 / 矩形假边界。
+    const p = this.P(f.x, f.y, 0);
+    ctx.beginPath(); ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = '#1676d2'; ctx.fill(); ctx.strokeStyle = this.th.halo; ctx.lineWidth = 2; ctx.stroke();
+    ctx.restore();
+  };
   Renderer.prototype.pickFacility = function (sx, sy, wx, wy) {
     const g = this.game, model = g && g.model;
     if (!model || !model.fn) return null;
@@ -5213,7 +5308,8 @@
     let best = null, bd = 1e9;
     for (const f of model.fn.list) {
       let hit = false, d = U.dist(wx, wy, f.x, f.y);
-      if (f.lmK >= 0) hit = g.city.inLandmarkSite(f.lmK, wx, wy) || d < 0.35;
+      if (CM.Fac.footprint(f, g.year()).length) hit = CM.Fac.contains(f, wx, wy, g.year()) || d < 0.35;
+      else if (f.lmK >= 0) hit = g.city.inLandmarkSite(f.lmK, wx, wy) || d < 0.35;
       else hit = d < Math.min(0.6, Math.max(0.3, f.r * 0.5));
       if (hit && d < bd) { bd = d; best = f.id; }
     }

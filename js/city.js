@@ -1169,6 +1169,69 @@
     return changed;
   };
   function Geo2() { return CM.Geo; }
+  // A short mapped bridge can round to a single grid vertex. Keep the crossing
+  // on the first raster edge of its connected approaches, even when the bridge
+  // and the ordinary road were imported as separate ways/groups.
+  City.prototype.shortWalkBridgeLinks = function () {
+    if (this._shortBridgeWays === this.roadWays) return this._shortBridgeLinks;
+    const ways = this.roadWays, groups = this.roadGroups, links = [], eps = 0.03;
+    const eligible = g => !(g.flags & 4) && g.cls < 4 && (g.walkOnly || g.cls >= 3 ||
+      (g.cls === 2 && D.collectorRoads?.includes(g.name)) || D.walkRoads?.includes(g.name));
+    const nameOf = w => w.walkSource != null ? D.walkways.names[D.walkways.ways[w.walkSource][0]] : groups[w.g].name;
+    for (let k = 0; k < ways.length; k++) {
+      const w = ways[k], g = groups[w.g], p = w.p;
+      if (!(g.flags & 1) || !eligible(g)) continue;
+      const i = Math.round(p[0]), j = Math.round(p[1]);
+      if (p.some((v, q) => Math.round(v) !== (q & 1 ? j : i))) continue;
+      const name = nameOf(w);
+      const extend = (x, y, dx, dy, used, distance) => {
+        if (used.size > 8 || distance > 2) return null;
+        let best = null, score = 0.25;
+        for (const n of CM.Geo.query(this.roadWayBk, x - eps, y - eps, x + eps, y + eps)) {
+          const a = ways[n], q = a.p;
+          if (used.has(n) || !eligible(groups[a.g]) || (name && nameOf(a) !== name)) continue;
+          for (const dir of [1, -1]) {
+            const start = dir > 0 ? 0 : q.length - 2;
+            if (U.dist(x, y, q[start], q[start + 1]) > eps) continue;
+            if (Math.round(q[start]) !== i || Math.round(q[start + 1]) !== j) continue;
+            for (let t = start + 2 * dir; t >= 0 && t + 1 < q.length; t += 2 * dir) {
+              const ax = q[t] - x, ay = q[t + 1] - y, length = Math.hypot(ax, ay);
+              if (length < 1e-6) continue;
+              const dot = (ax * dx + ay * dy) / (length * Math.hypot(dx, dy));
+              if (dot > score) { score = dot; best = { n, dir, start }; }
+              break;
+            }
+          }
+        }
+        if (!best) return null;
+        const a = ways[best.n], q = a.p, seen = new Set(used); seen.add(best.n);
+        let travelled = distance, px = x, py = y;
+        for (let t = best.start + 2 * best.dir; t >= 0 && t + 1 < q.length; t += 2 * best.dir) {
+          travelled += U.dist(px, py, q[t], q[t + 1]);
+          if (travelled > 2) return null;
+          const ni = Math.round(q[t]), nj = Math.round(q[t + 1]);
+          if (ni !== i || nj !== j) {
+            // First Bresenham step: exactly the edge emitted for this approach.
+            const ax = Math.abs(ni - i), ay = Math.abs(nj - j), err = 2 * (ax - ay);
+            const ii = i + (err > -ay ? Math.sign(ni - i) : 0);
+            const jj = j + (err < ax ? Math.sign(nj - j) : 0);
+            if (i < 0 || j < 0 || ii < 0 || jj < 0 || i > this.W || ii > this.W || j > this.H || jj > this.H) return null;
+            return { e: this.edgeBetween(i, j, ii, jj), groups: [...seen].map(n => ways[n].g) };
+          }
+          dx = q[t] - px; dy = q[t + 1] - py; px = q[t]; py = q[t + 1];
+        }
+        return extend(px, py, dx, dy, seen, travelled);
+      };
+      const last = p.length - 2;
+      const a = extend(p[0], p[1], p[0] - p[2], p[1] - p[3], new Set([k]), 0);
+      const b = extend(p[last], p[last + 1], p[last] - p[last - 2], p[last + 1] - p[last - 1], new Set([k]), 0);
+      // Both banks must have an actual connected approach. Unbuilt approaches
+      // are checked again when the walking graph is rebuilt for a later year.
+      if (a && b) links.push({ edges: [a.e, b.e], groups: [...new Set([...a.groups, ...b.groups])] });
+    }
+    this._shortBridgeWays = ways; this._shortBridgeLinks = links;
+    return links;
+  };
   // ---------------- 地面铁路（v1.9） ----------------
   // 普通铁路不参与乘客出行模拟，但地面铁路（非高架、非隧道）是城市空间的阻隔：在没有道口、地道或天桥的地方阻断步行与支路、次干道。
   // 合法通道 = 真实道路（已通车）或街道（所在街区已开发）跨越铁路的位置；格网边在通道附近（RAIL_R 以内）越过铁路时绕行到通道通过，
@@ -1388,6 +1451,10 @@
     yield;
     const eRail = this.eRail, eDet = this.eRailDet;
     const mappedBridge = e => this.eArt[e] === 2 && !!(this.roadGroups[this.eName[e] - 1]?.flags & 1);
+    if (this.eWalkRoad) for (const link of this.shortWalkBridgeLinks()) {
+      if (!link.groups.every(g => this.roadsBuilt[g])) continue;
+      for (const e of link.edges) if (this.eBlock[e] === 1 && this.eCls[e] !== 4) this.eWalkRoad[e] |= WALK_OPEN | WALK_WATER;
+    }
     // ---- 步行 ----
     const wDeg = new Int32Array(V + 1);
     const walkable = new Uint8Array(nTot);
@@ -1663,9 +1730,8 @@
 
   // ---------------- 城市发展（每月） ----------------
   // ctx: { year, monthIndex, zoneAccess (Float32Array 0..1), cellWalk (Float32Array m), coverage, econ, pull }
-  // pull（v2.3 地铁带动发展，可空）：{ field 每格的车站吸引, M 线网成熟度 0–1, w 车站吸引的权重 }，见 Game.metroPull
-  // econ（城市经济，可空）：popGrowth 人口增速系数、jobs 就业水平系数、com 商业发展系数。只调整增速与就业水平，
-  // 长期人口仍回到本城的人口曲线；地铁覆盖对人口的吸引（boost）不经过经济系数，避免重复计算
+  // pull（地铁带动发展，可空）：{ field 人口吸引, jobField 岗位吸引, M 线网成熟度, w 车站吸引的权重 }，见 Game.metroPull
+  // 经济只调整年代趋势增速与就业水平。覆盖和车站额外容量通过目标人口缺口逐月兑现。
   City.prototype.growMonth = function (ctx) {
     const N = this.N, W = this.W, year = ctx.year;
     const recalibrated = this.applyPopulationDistribution(year);
@@ -1674,29 +1740,24 @@
     const boost = 1 + CFG.growth.metroBoostMax * U.clamp((ctx.coverage || 0) / 0.5, 0, 1);
     const target = U.interp(CFG.growth.popCurve, year + 1 / 12) * boost;
     const targetNow = U.interp(CFG.growth.popCurve, year) * boost;
-    let dP = (target - targetNow) * egp + 0.04 * (targetNow - tot.pop);
-    dP = Math.max(dP, -0.002 * tot.pop);
-    const tJ = target * U.interp(CFG.growth.jobsRatio, year + 1 / 12) * ejf;
-    let dJ = (tJ - tot.jobs) * 0.12 + Math.max(0, dP) * U.interp(CFG.growth.jobsRatio, year) * 0.3;
-    dJ = Math.max(dJ, -0.002 * tot.jobs);
     const eraMul = year < 2000 ? 0.8 : (year < 2010 ? 0.8 + 0.2 * (year - 2000) / 10 : Math.min(1.15, 1 + 0.15 * (year - 2010) / 20));
     // 历史发展阶段（v2.2，eras.js）：片区增长权重与疏解。疏解把成熟片区的一小部分岗位 / 人口放回本月的分配量，
     // 总量不变（就业中心迁移、旧城疏解），再按增长权重分配到其他地方
     const EF = CM.Eras && CM.Eras.enabled() ? CM.Eras.regionFactors(this, year) : null;
+    let mJ = 0, mP = 0;
     if (EF) {
-      let mJ = 0, mP = 0;
       for (let c = 0; c < N; c++) {
         const k = this.region[c], rj = EF.relocJ[k], rp = EF.relocP[k];
         if (rj > 0 && this.jobs[c] > 0) { const v = this.jobs[c] * rj; this.jobs[c] -= v; mJ += v; }
         if (rp > 0 && this.pop[c] > 0) { const v = this.pop[c] * rp; this.pop[c] -= v; mP += v; }
       }
-      dJ += mJ; dP += mP;
     }
     // 地铁带动发展（v2.3）：线网越成熟，增长越多地跟着车站与枢纽走（吸引权重 pw），历史阶段预设的片区权重越弱（flat）；
-    // 车站周边可容纳的人口与岗位随之提高。只改变增长落在哪里，全城总量仍按人口曲线
+    // 上海把合格地块因车站增加的容量部分计入当月全市人口目标。
     const PL = ctx.pull || null, GL = CFG.metroLed, pw = PL ? PL.w : 0, flat = PL ? 1 - GL.flatten * PL.M : 1;
+    const rules = CFG.growth.stationPopulation, jobField = PL && (PL.jobField || PL.field);
     const wR = new Float32Array(N), wJ = new Float32Array(N), capR = new Float32Array(N), capJ = new Float32Array(N);
-    let sR = 0, sJ = 0;
+    let sR = 0, sJ = 0, extraCapacity = 0;
     const mi = ctx.monthIndex;
     for (let c = 0; c < N; c++) {
       const L = this.lu[c];
@@ -1705,9 +1766,7 @@
       const lf = this.landFrac[c] * (1 - this.taken[c]);
       if (lf <= 0.05) continue;
       const P = L === LU.RURAL ? this.plan[c] : L;
-      const pf = PL ? PL.field[c] : 0;
-      const cr = resCap(P) * eraMul * lf * (1 + GL.capR * pw * Math.min(1.5, pf)), cj = jobCap(P, this.regions[this.region[c]].plan) * eraMul * lf * (1 + GL.capJ * pw * Math.min(2, pf));
-      capR[c] = cr; capJ[c] = cj;
+      const rf = PL ? PL.field[c] : 0, jf = jobField ? jobField[c] : 0;
       const i = c % W, j = (c / W) | 0;
       let nb = 0;
       for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
@@ -1724,15 +1783,32 @@
         if (nb < 0.2 && st === 0 && !this.nearArt[c]) continue;
         seed = 0.35 + (this.nearArt[c] ? 0.3 : 0);
       }
+      const baseR = resCap(P) * eraMul * lf;
+      const bonusR = GL.capR * pw * (rules ? rf : Math.min(1.5, rf));
+      const cr = baseR * (1 + bonusR);
+      const cj = jobCap(P, this.regions[this.region[c]].plan) * eraMul * lf * (1 + GL.capJ * pw * Math.min(2, jf));
+      capR[c] = cr; capJ[c] = cj;
+      if (rules) extraCapacity += baseR * bonusR;
       const rnd = 0.6 + 0.8 * U.hash2(c, mi, this.seed + 31);
       const remR = cr - this.pop[c], remJ = cj - this.jobs[c];
       const kR = EF ? Math.pow(EF.pop[this.region[c]], flat) : 1, kJ = EF ? Math.pow(EF.jobs[this.region[c]], flat) : 1;
-      if (remR > 0) { wR[c] = remR * (0.25 + acc) * (1 + 1.6 * st) * (0.3 + nb) * rnd * seed * kR * (1 + GL.res * pw * pf); sR += wR[c]; }
+      if (remR > 0) {
+        const vacancy = rules ? rules.vacancyBias - this.pop[c] / cr : 1;
+        wR[c] = remR * (0.25 + acc) * (1 + 1.6 * st) * (0.3 + nb) * rnd * seed * kR * (1 + GL.res * pw * rf) * vacancy;
+        sR += wR[c];
+      }
       if (remJ > 0) {
         const comBoost = (P === LU.COM || P === LU.MIX) ? 2.0 * ecom : 1;
-        wJ[c] = remJ * (0.2 + acc * 1.2) * (1 + 1.6 * st * comBoost) * (0.3 + nb) * rnd * seed * kJ * (1 + GL.jobs * pw * pf * (comBoost > 1 ? 1.3 : 1)); sJ += wJ[c];
+        wJ[c] = remJ * (0.2 + acc * 1.2) * (1 + 1.6 * st * comBoost) * (0.3 + nb) * rnd * seed * kJ * (1 + GL.jobs * pw * jf * (comBoost > 1 ? 1.3 : 1)); sJ += wJ[c];
       }
     }
+    const populationBonus = rules ? rules.targetShare * extraCapacity : 0;
+    let dP = (target - targetNow) * egp + 0.04 * (targetNow + populationBonus - tot.pop);
+    dP = Math.max(dP, -0.002 * tot.pop);
+    const tJ = target * U.interp(CFG.growth.jobsRatio, year + 1 / 12) * ejf;
+    let dJ = (tJ - tot.jobs) * 0.12 + Math.max(0, dP) * U.interp(CFG.growth.jobsRatio, year) * 0.3;
+    dJ = Math.max(dJ, -0.002 * tot.jobs) + mJ;
+    dP += mP;
     const changed = [];
     const add = (arr, cap, w, s, d) => {
       if (d > 0 && s > 0) {

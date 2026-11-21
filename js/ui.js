@@ -589,6 +589,8 @@
     g.on('trafficImpact', function () { self.markUnsaved(); if (self.stack.length) self.rerenderPage(); if (CM.Tutorial && CM.Tutorial.onImpact && CM.Tutorial.onImpact()) return; self.toast('本次建设的效果报告已生成', 'info', { label: '查看报告', fn: function () { self.openPage('impact', null, { root: true }); } }); });
     g.on('finance', function () { self.markUnsaved(); self.rerenderPage(); self.scheduleAutosave(); });
     g.on('month', function () { self.markUnsaved(); if (!g.jumping) { self.rerenderPage(); self.scheduleAutosave(); if (g.speed > 0) snd('month'); } });   // 跳月期间页面被推进卡片盖住，结束时统一刷新（v2.6）
+    const refreshGrowth = function () { if (self.R.usesDevelopmentHistory() && !g.jumping) self.renderDock(); };
+    g.on('month', refreshGrowth); g.on('jumpDone', refreshGrowth);
     g.on('month', function () { if (CM.OpsAlerts) { try { CM.OpsAlerts.record(g); } catch (e) { console.error(e); } } });
     g.on('network', function () { self.updateOpsDock(); });
     g.on('autosave', function () { self.scheduleAutosave(); });
@@ -1519,6 +1521,7 @@
           h('span', null, p.name), h('b', null, trip ? time(trip.total) : '无可用行程'),
           trip ? h('span', { class: 'trip-distance' }, distance(trip)) : null);
       })));
+    body.append(h('p', { class: 'tiny muted' }, '按乘客模拟的成本规则选路，显示实际用时；换乘惩罚不计入分钟数。'));
     const trip = result.periods[t.period];
     body.append(h('div', { class: 'trip-caption' }, CFG.periods[t.period].name + ' · 分段用时与距离'));
     if (!trip) body.append(h('p', { class: 'note' }, '这个时段没有可用的地铁行程。'));
@@ -1684,15 +1687,71 @@
     if (!this.g()) return;
     this.doAutosave(true).then(function (r) { if (r && r.ok) self.toast('进度已保存', 'good'); else if (r && r.error) self.toast('未能保存：' + r.error, 'warn'); });
   };
+  UI.prototype.pickDevelopmentParcel = function (x, y) {
+    const cell = this.g().city.cellAt(x, y);
+    this.R.layerOpt.growthCell = cell < 0 ? null : cell;
+    this.renderDock();
+  };
+  UI.prototype.developmentHistoryLegend = function (box, opts, grad, li) {
+    const game = this.g(), LO = this.R.layerOpt, H = CM.DevelopmentHistory, jobs = LO.devK === 'jobs';
+    const range = this.R.developmentWindow();
+    if (!range) return jobs ? '尚无地块岗位记录。' : '尚无地块人口记录。';
+    const { history, settings } = range, netLabel = jobs ? '净增岗位' : '净增人数', zeroLabel = jobs ? '从零新增岗位' : '新入住';
+    opts('months', [[1, '1 个月'], [3, '3 个月'], [6, '6 个月'], [12, '12 个月'], [36, '36 个月']], settings);
+    const startKey = H.key(range.start), endKey = H.key(range.end);
+    const choose = (name, start) => {
+      const frames = history.frames.filter(f => start ? H.key(f) <= endKey : H.key(f) >= startKey);
+      const el = h('select', {
+        class: start ? 'growth-start' : 'growth-end', disabled: frames.length < 2,
+        onchange: () => {
+          settings.months = 0;
+          settings.start = start ? +el.value : startKey;
+          settings.end = start ? endKey : +el.value;
+          this.renderDock();
+        },
+      }, frames.map(frame => h('option', { value: H.key(frame) }, H.label(frame))));
+      el.value = start ? startKey : endKey;
+      return h('label', null, h('span', null, name), el);
+    };
+    box.appendChild(h('div', { class: 'growth-dates' }, choose('起始日期', true), choose('结束日期', false)));
+    if (range.start === range.end) {
+      return history.frames.length === 1 ? '已记录当前日期，完成下一次月结后即可比较。' : '选择两个不同日期查看变化。';
+    }
+    opts('metric', [['rate', '累计增速'], ['net', netLabel]], settings);
+    const { loss, gain, unknown } = H.colors;
+    const full = settings.metric === 'net' ? String(H.scale.net) : U.fmtPct(H.scale.rate, 0);
+    grad([loss, '#d7dce1', gain], '≤ −' + full, '≥ +' + full);
+    li(gain, zeroLabel, 'stripe');
+    li(unknown, '无数据');
+
+    const city = game.city, c = LO.growthCell;
+    if (c == null || c >= city.N) return jobs ? '点击地块查看起止岗位数和变化。' : '点击地块查看起止人口和变化。';
+    const x = c % city.W, y = Math.floor(c / city.W);
+    const name = city.townshipAt?.(x + 0.5, y + 0.5)?.name || city.regions[city.region[c]]?.name || '地块';
+    const p0 = H.at(history.values(range.start), x, y), p1 = H.at(history.values(range.end), x, y), delta = p1 - p0;
+    const number = n => n < 0 ? '无数据' : U.fmtInt(n);
+    const comparable = p0 >= 0 && p1 >= 0;
+    box.appendChild(h('div', { class: 'growth-detail' }, h('strong', null, name),
+      this.kv([
+        [jobs ? '期初岗位' : '期初人口', number(p0)],
+        [jobs ? '期末岗位' : '期末人口', number(p1)],
+        [netLabel, comparable ? (delta > 0 ? '+' : '') + U.fmtInt(delta) : '—'],
+        ['累计增速', !comparable ? '—' : p0 ? (delta > 0 ? '+' : '') + U.fmtPct(delta / p0, 1) : p1 ? zeroLabel : '—'],
+      ])));
+    return '';
+  };
   // 图例：只保留读图所需的色标与一句说明
   UI.prototype.legend = function (id) {
     const self = this, R = this.R;
     const box = h('div', { class: 'legend' });
     const grad = function (stops, a, b) { box.append(h('div', { class: 'bar', style: { background: 'linear-gradient(90deg,' + stops.map(AX.color).join(',') + ')' } }), h('div', { class: 'row between tiny muted' }, h('span', null, a), h('span', null, b))); };
-    const li = function (col, text, kind) { col = AX.color(col); box.appendChild(h('div', { class: 'li' }, h('span', { class: kind === 'line' ? 'swatch' : (kind === 'ring' ? 'dot ring' : 'dot'), style: kind === 'ring' ? { borderColor: col } : { background: col } }), text)); };
-    const opts = function (key, list) {
-      const ctl = h('div', { class: 'seg-ctl sm', style: { margin: '2px 0 8px' } });
-      for (const o of list) ctl.appendChild(h('button', { class: R.layerOpt[key] === o[0] ? 'on' : '', 'data-silent': '1', onclick: function () { R.layerOpt[key] = o[0]; snd('soft'); self.renderDock(); } }, o[1]));
+    const li = function (col, text, kind) { col = AX.color(col); box.appendChild(h('div', { class: 'li' }, h('span', { class: kind === 'line' ? 'swatch' : (kind === 'ring' ? 'dot ring' : 'dot'), style: kind === 'ring' ? { borderColor: col } : { background: kind === 'stripe' ? 'repeating-linear-gradient(135deg,' + col + ' 0 2px, transparent 2px 4px)' : col } }), text)); };
+    const opts = function (key, list, settings = R.layerOpt) {
+      const ctl = h('div', { class: 'seg-ctl sm' + (key === 'devK' || key === 'months' ? ' legend-options-wrap' : ''), style: { margin: '2px 0 8px' } });
+      for (const o of list) {
+        const active = settings[key] === o[0];
+        ctl.appendChild(h('button', { class: active ? 'on' : '', 'aria-pressed': String(active), 'data-silent': '1', onclick: function () { settings[key] = o[0]; snd('soft'); self.renderDock(); } }, o[1]));
+      }
       box.appendChild(ctl);
     };
     const CC = AX.enabled() ? AX.statuses() : CM.Renderer.CONG_COLS;
@@ -1759,6 +1818,7 @@
       }
       case 'dev': {
         opts('devK', [['pop', '人口'], ['jobs', '岗位'], ['land', '新用地'], ['pull', '地铁带动']]);
+        if (R.usesDevelopmentHistory()) { note = this.developmentHistoryLegend(box, opts, grad, li); break; }
         // 地铁带动（v2.3）：车站对周边增长的吸引与线网成熟度（成熟度越高，增长越多地跟着车站与枢纽走）
         if (R.layerOpt.devK === 'pull') {
           const g = self.g(), P = g && g.metroPull ? g.metroPull() : null;
@@ -1768,20 +1828,21 @@
             box.appendChild(h('div', { class: 'tiny muted', style: { margin: '6px 0 2px' } }, '新增人口与岗位里，车站带动的权重约为 ×' + U.fmtNum(P.w, 2) + '（线网成熟后为 ×1）'));
           } else box.appendChild(h('div', { class: 'tiny muted', style: { margin: '4px 0 2px' } }, '还没有运营中的车站。'));
           note = '每座运营车站吸引周边约 1 km 的新增人口与岗位：换乘线路越多、客流越大、车站商业开发等级越高，吸引越强；车站开通后约 4 年逐步形成。线网越成熟（地铁覆盖的人口越多），城市增长越多地跟着车站走，历史阶段预设的重点片区影响越弱——先把地铁修过去、做好车站开发，人口与岗位会随之聚集。全城增长总量不变，只改变落在哪里。';
+          if (CFG.growth.stationPopulation) note = '上海的地块人口容量受 2 km 内运营车站影响，车站强度取决于轨道通达性、步行接驳、运营线路和站点开发。每月将额外容量的 15% 计入全市人口目标，新增居民优先分配到入住率较低且有空位的地块。';
           break;
         }
         opts('devB', [['era', '本阶段以来'], ['start', '本局以来']]);
-        const g = self.g(), base = g && (R.layerOpt.devB === 'start' ? g.startBase : g.eraBase), land = R.layerOpt.devK === 'land';
-        const ramp = { pop: ['#c8ecd2', '#48b278', '#147846'], jobs: ['#c4d6fa', '#5c84e6', '#2846be'], land: ['#fae2aa', '#e2a03c', '#b06014'] }[R.layerOpt.devK];
+        const g = self.g(), base = g && (R.layerOpt.devB === 'start' ? g.startBase : g.eraBase);
+        const ramp = ['#fae2aa', '#e2a03c', '#b06014'];
         // v2.3：色标随实际变化自适应；还没有变化时显示本阶段的重点发展片区（斜纹）
         const sc = R.devScale && R.devScale.key === R.layerOpt.devK ? R.devScale : null, months = g && base ? g.ym() - U.ymIndex(base.y, base.m) : 0;
-        const amt = function (v) { return land ? U.fmtNum(v, 2) + ' km²' : U.fmtPeople(v); };
+        const amt = function (v) { return U.fmtNum(v, 2) + ' km²'; };
         if (sc && !sc.any) {
           grad(ramp, '规划倾向较弱', '本阶段重点发展');
-          note = '对比基准' + (months > 0 ? '只有 ' + months + ' 个月' : '刚刚建立') + '，城市还没有明显变化。斜纹标出本阶段' + (land ? '' : (R.layerOpt.devK === 'jobs' ? '就业' : '人口')) + '重点增长的片区；推进几个月后，这里会显示实际的增减。';
+          note = '对比基准' + (months > 0 ? '只有 ' + months + ' 个月' : '刚刚建立') + '，城市还没有明显变化。斜纹标出本阶段重点增长的片区；推进几个月后，这里会显示实际的增减。';
           if (g && base && R.layerOpt.devB === 'era' && g.startBase && U.ymIndex(g.startBase.y, g.startBase.m) < U.ymIndex(base.y, base.m)) note += ' 也可以切换到「本局以来」。';
         } else {
-          grad(ramp, '增加 ' + amt(sc ? sc.min : (land ? 0.05 : 300)), '增加 ' + amt(sc ? sc.full : (land ? 1 : 3000)) + ' 以上');
+          grad(ramp, '增加 ' + amt(sc ? sc.min : 0.05), '增加 ' + amt(sc ? sc.full : 1) + ' 以上');
           li('#c83232', '减少（疏解、外迁或拆除）');
           note = base ? '对比：' + base.y + ' 年 ' + base.m + ' 月' + (R.layerOpt.devB === 'start' ? '（本局开始）' : '（' + ((CM.Eras.byId(base.id) || {}).name || '本阶段') + '开始）') + (base.joined ? '，旧存档从读档时开始比较' : '') + '。以约 1 km 的方块统计、平滑显示，地图上标出变化最大的片区；色标随变化幅度自动调整。' : '尚无对比基准。';
         }

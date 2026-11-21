@@ -111,7 +111,7 @@ for (const s of named) {
     continue;
   }
   assert.ok(c >= 0 && city.landFrac[c] >= 0.5 && !afterFar[c], s.id + ' must be inside real, buildable Shanghai land');
-  assert.ok(s.note, s.id + ' must explain the location');
+  assert.ok(s.note || s.layout?.osm?.length, s.id + ' must provide a location note or mapped source');
 }
 for (const [id, t, region] of [
   ['jiading_baolong', 'shop', 'jiading_new'], ['songjiang_inc', 'shop', 'songjiang'],
@@ -274,9 +274,9 @@ assert.equal(facility('sh_east_station').open, 2027.5);
 assert.ok(!Fac.active(facility('sh_chongming_air'), 2034.99, city));
 assert.ok(Fac.active(facility('sh_chongming_air'), 2035, city));
 assert.equal(Fac.pax(facility('sh_chongming_air'), 2035), 170_000);
-assert.equal(Fac.pax(facility('sh_chongming_air'), 2040), Fac.pax(facility('sh_hqair'), 2040));
+assert.equal(Fac.pax(facility('sh_chongming_air'), 2040), Fac.pax(facility('sh_hqair'), 2040) + Fac.pax(facility('sh_hqair_t1'), 2040));
 assert.equal(Fac.pax(facility('sh_pvg_terminal'), 2025), 200_000);
-assert.equal(Fac.pax(facility('sh_hqair'), 2025), 133_000);
+assert.equal(Fac.pax(facility('sh_hqair'), 2025) + Fac.pax(facility('sh_hqair_t1'), 2025), 133_000);
 assert.equal(Fac.pax(facility('sh_hqstation'), 2024), 400_000);
 assert.ok(Fac.pax(facility('sh_hqstation'), 2026) > Fac.pax(facility('sh_station'), 2026));
 assert.ok(Fac.pax(facility('sh_west'), 2026) < Fac.pax(facility('sh_south'), 2026) / 5);
@@ -289,7 +289,9 @@ assert.equal(DATA.runways.filter(r => r.from === 2035).length, 2);
 assert.ok(DATA.events.some(e => e.y === 2035 && e.tag === '模拟' && e.title === '崇明国际机场启用'));
 assert.ok(Fac.share(facility('sh_oly_stadium'), 2036 + 7 / 12) > Fac.share(facility('sh_oly_stadium'), 2035) * 5);
 assert.equal(Fac.share(facility('sh_oly_stadium'), 2040 + 7 / 12), Fac.share(facility('sh_oly_stadium'), 2037));
-assert.equal(CM.U.interp(CFG.growth.popCurve, 2040), 35_000_000);
+assert.equal(Math.round(CM.U.interp(CFG.growth.popCurve, 2040)), 32_666_667);
+assert.equal(CM.U.interp(CFG.growth.popCurve, 2050), 37_000_000);
+assert.equal(CM.U.interp(CFG.growth.popCurve, 2080), 37_000_000);
 console.log('PASS Shanghai administrative coverage, release dates, Olympic state and hub dates');
 
 const modern = DATA.histTasks.filter(t => t.appear[0] >= 2021);
@@ -297,6 +299,7 @@ assert.equal(new Set(DATA.histTasks.map(t => t.id)).size, DATA.histTasks.length)
 assert.ok(modern.some(t => t.appear[0] === 2021));
 assert.equal(Math.max(...modern.map(t => t.deadline[0])), 2041);
 for (const [id, appear, deadline] of [
+  ['sh-newcity-lingang', [2028, 1], [2038, 12]],
   ['sh14', [2027, 9], [2036, 7]],
   ['sh-olympic-campus', [2029, 1], [2035, 6]],
   ['sh-olympic-test', [2035, 7], [2036, 8]],
@@ -521,7 +524,8 @@ assert.equal(CM.Metro.checkSite(city, songjiangHall.x, songjiangHall.y, 'undergr
 const acrossHall = [[songjiangHall.x - 0.25, songjiangHall.y], [songjiangHall.x + 0.25, songjiangHall.y]];
 assert.equal(CM.Metro.geomFromControl(acrossHall, 'elevated', city).protM, 0);
 const protectedLandmark = DATA.landmarks.find(l => l.id === 'sh_pearl');
-assert.match(CM.Metro.checkSite(city, protectedLandmark.x, protectedLandmark.y, 'underground').msg, /受保护建筑/);
+assert.equal(CM.Metro.checkSite(city, protectedLandmark.x, protectedLandmark.y, 'underground').ok, true);
+assert.match(CM.Metro.checkSite(city, protectedLandmark.x, protectedLandmark.y, 'surface').msg, /受保护建筑/);
 assert.ok(city.car.links.some(link => city.roadNames[link.name] === '松礼路'));
 const songjiangModel = new CM.Model(city, { deferDemand: true });
 songjiangModel.setYear(2025);

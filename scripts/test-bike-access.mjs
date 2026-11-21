@@ -33,8 +33,15 @@ assert.equal(entry(0, 0).bikeShare, 0, 'Walking wins for a nearby origin');
 assert.equal(entry(1, 0).bikeShare, 0, 'A 310 m ride loses once the model applies the transfer penalty');
 assert.equal(entry(1, 0).cost, C.CFG.choice.walkW * entry(1, 0).w);
 const timedAccess = model.tripAccess({ x: 1.24, y: 0 }).find(e => e.s === 0);
-assert.equal(timedAccess.mode, 'bike', 'The time tool compares elapsed time for the same 310 m approach');
-assert.equal(timedAccess.minutes, 310 / 225 + 2);
+assert.equal(timedAccess.mode, 'walk', 'The time tool and passenger model both prefer walking for the same 310 m approach');
+assert.equal(timedAccess.minutes, entry(1, 0).w);
+assert.equal(timedAccess.cost, entry(1, 0).cost);
+assert.equal(C.Model.accessChoice(506.25, 506.25).bikeShare, 0, 'Equal generalized costs prefer walking');
+assert.equal(C.Model.accessChoice(506.26, 506.26).bikeShare, 1);
+const longerAccess = model.tripAccess({ x: 2.4, y: 0 }).find(e => e.s === 0);
+assert.equal(longerAccess.mode, 'bike');
+assert.ok(Math.abs(longerAccess.minutes - (600 / 225 + 2)) < 1e-9);
+assert.equal(longerAccess.cost, C.CFG.choice.walkW * longerAccess.minutes + 4);
 assert.equal(entry(39, 0), undefined, 'Stations beyond the cycling limit stay unavailable');
 city.pop.fill(0); city.jobs.fill(0); city.pop[3] = 7; city.jobs[3] = 11;
 for (const k of [0, 1]) {

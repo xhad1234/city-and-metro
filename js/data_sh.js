@@ -47,8 +47,12 @@
   // 市内到发接驳量，万人次/日。崇明机场在游戏中沿用同年的虹桥机场客流曲线。
   const { x: hqT2X, y: hqT2Y } = CM.SH_AIRPORT_LAYOUT.terminals.find(t => t.id === 'hq_t2');
   const hongqiaoT2 = [hqT2X, hqT2Y];
+  const hqT1 = CM.SH_AIRPORT_LAYOUT.terminals.find(t => t.id === 'hq_t1');
+  const hongqiaoT1 = [hqT1.x, hqT1.y], hongqiaoSplit = 2010 + 2 / 12;
   const hongqiaoPax = [[2010.17, 8.4], [2015, 10.3], [2019, 12.2], [2020, 8.5], [2021, 8.9], [2022, 3.9],
     [2023, 11.2], [2024, 12.7], [2025, 13.3], [2030, 15.5], [2035, 17], [2040, 18], [2050, 19]];
+  // 两座航站楼分开接驳；15% / 85% 是游戏分配假设，合计沿用原机场总量。
+  const hongqiaoTerminalPax = share => [[hongqiaoSplit, hongqiaoPax[0][1] * share], ...hongqiaoPax.map(([y, p]) => [y, p * share])];
   const chongmingAir = {
     at: llW(31.5490, 121.6940),
     runways: [[llW(31.5540, 121.6760), llW(31.5540, 121.7130)], [llW(31.5435, 121.6760), llW(31.5435, 121.7130)]],
@@ -377,13 +381,14 @@
         note: '虹桥枢纽铁路站房。2024 年铁路客流约 1.55 亿人次，游戏按日均到发及市内接驳估算；不叠加机场或枢纽其他方式客流。' },
       { id: 'sh_disney', n: '上海迪士尼乐园', t: 'scenic', lm: 'sh_disney', y0: [2016, 6], w: [[2016.5, 0.045], [2019, 0.05], [2020, 0.025], [2021, 0.04], [2023, 0.05]], we: 1.9, note: '主题乐园：周末与假日客流明显高于工作日（估算）；位于浦东川沙，2016 年 6 月开园。' },
       { id: 'sh_pvgair', n: '浦东机场（川沙接驳）', t: 'air', ext: ['E', 9], extEdge: [oldOffset[0] + 152, oldEdge[1]], at: oldEdge, y0: [1999, 9], y1: [2015, 1], pax: [[1999.67, 0.9], [2005, 5.8], [2010, 9.2], [2015, 14]], note: '1999 年 9 月浦东机场通航。游戏在机场片区开放前保留川沙接驳。' },
-      { id: 'sh_pvg_terminal', n: '上海浦东国际机场（T1·T2）', t: 'air', at: llW(31.1519, 121.8015), fixedSite: true, noModel: true, r: 3, y0: [2015, 1],
+      { id: 'sh_pvg_terminal', n: '上海浦东国际机场（T1·T2）', t: 'air', at: llW(31.1519, 121.8015), terminalIds: ['pvg_t1', 'pvg_t2', 'pvg_s1', 'pvg_s2'], fixedSite: true, noModel: true, r: 3, y0: [2015, 1],
         rw: [llW(31.1721, 121.7963), llW(31.1360, 121.7986)], pax: [[2015, 14], [2019, 18], [2020, 7.5], [2021, 8], [2022, 3.5], [2023, 13], [2024, 18.2], [2025, 20], [2030, 23], [2040, 29]],
         note: '航站区以两楼之间的到达交通中心代表。根据民航及上海机场年报扣除纯空空中转等，估算市内接驳量。' },
-      { id: 'sh_hqair_t1', n: '虹桥机场（1号航站楼时期）', t: 'air', at: llW(31.1965, 121.3425), fixedSite: true, noModel: true, y1: [2010, 3],
-        pax: [[1990, 1.4], [1999.67, 3.5], [2000, 2.5], [2005, 4.8], [2010.17, 8.4]], note: '2010 年 3 月以前，虹桥民航客运集中在机场东侧的 1 号航站楼。' },
-      { id: 'sh_hqair', n: '上海虹桥国际机场（T2接驳）', t: 'air', at: hongqiaoT2, taskEntrance: hongqiaoT2, fixedSite: true, noModel: true, y0: [2010, 3], r: 1.7,
-        rw: [llW(31.2130, 121.3316), llW(31.1834, 121.3332)], pax: hongqiaoPax, note: '2010 年 3 月起以 2 号航站楼代表虹桥机场两座航站楼的市内接驳。' },
+      { id: 'sh_hqair_t1', n: '上海虹桥国际机场 T1 航站楼', label: '虹桥机场 T1', t: 'air', at: hongqiaoT1, taskEntrance: hongqiaoT1, terminalIds: ['hq_t1'], fixedSite: true, noModel: true,
+        pax: [[1990, 1.4], [1999.67, 3.5], [2000, 2.5], [2005, 4.8], [hongqiaoSplit - 1e-6, 8.4], ...hongqiaoTerminalPax(0.15)],
+        note: '机场东侧 1 号航站楼，2010 年 3 月后继续独立接驳。游戏将原虹桥机场总接驳量的 15% 分给 T1、85% 分给 T2（模拟分配，合计不增加）。' },
+      { id: 'sh_hqair', n: '上海虹桥国际机场 T2 航站楼', label: '虹桥机场 T2', t: 'air', at: hongqiaoT2, taskEntrance: hongqiaoT2, terminalIds: ['hq_t2'], fixedSite: true, noModel: true, y0: [2010, 3], r: 1.7,
+        rw: [llW(31.2130, 121.3316), llW(31.1834, 121.3332)], pax: hongqiaoTerminalPax(0.85), note: '机场西侧 2 号航站楼，2010 年 3 月起独立接驳。游戏按原虹桥机场总接驳量的 85% 分配，另 15% 由 T1 接驳（模拟分配）。' },
       { id: 'sh_chongming_air', n: '崇明国际机场', t: 'air', at: chongmingAir.at, rw: chongmingAir.runways[1], fixedSite: true,
         regionGate: true, y0: [2035, 1], r: 2, pax: hongqiaoPax,
         note: '游戏设定：航站楼位于崇明岛中东部、港沿镇与向化镇之间，2035 年投运，市内接驳量与同年的虹桥机场相同。',
@@ -511,7 +516,8 @@
       site('ecnu_minhang', '华东师范大学（闵行校区）', 'uni', 31.03213, 121.44737, 2004, [[2004, 0.008], [2006, 0.019]], '闵行区东川路500号，2006 年完成主体搬迁。', { r: 1.8, taskEntrance: ll(31.025155, 121.454514) }),
       site('tongji_jiading', '同济大学（嘉定校区）', 'uni', 31.28652, 121.20932, 2004, 0.018, '嘉定区曹安公路4800号。', { r: 1.8 }),
       site('lingang_uni', '上海海洋大学（临港校区）', 'uni', 30.88475, 121.89311, 2008, 0.013, '浦东新区沪城环路999号。', { r: 1.6 }),
-      site('maritime_lingang', '上海海事大学（临港校区）', 'uni', 30.87698, 121.90022, 2008, 0.013, '浦东新区海港大道1550号。', { r: 1.7 }),
+      site('maritime_lingang', '上海海事大学（临港校区）', 'uni', 30.8781863, 121.9065117, 2008, 0.013,
+        '浦东新区海港大道1550号。地图与接驳点设在东侧3号门（沪城环路155号、古棕路），避开校园中央的智慧湖。', { r: 1.7 }),
       site('dianji_lingang', '上海电机学院（临港校区）', 'uni', 30.89053, 121.88071, 2011, 0.008, '浦东新区水华路300号。'),
       site('jianqiao_lingang', '上海建桥学院（临港校区）', 'uni', 30.89319, 121.88848, 2015, 0.009, '浦东新区沪城环路1111号。'),
       site('haiwan_uni', '上海师范大学（奉贤校区）', 'uni', 30.83974, 121.51285, 1987, 0.013, '奉贤区海思路100号。', { r: 1.6 }),
@@ -763,6 +769,10 @@
     far('chongming', '崇明岛', { district: ['崇明区'] }),
     far('huaqiao', '昆山花桥（江苏）', { streets: ['花桥镇'] }, 'mix'),
   );
+  // 郊区连接任务按目标点 1 km 内的运营车站判断；中心城沿用各任务半径。
+  const suburbanConnections = new Set(['airport', 'hqcbd', 'jinqiao', 'waigaoqiao', 'beicai', 'pudong',
+    'wusong', 'dachang', 'xinzhuang', 'minhang', 'chuansha', 'disney', 'jiading', 'outer']);
+  for (const r of data.regions) if (r.independent || suburbanConnections.has(r.id)) r.connectRadiusM = 1000;
   data.districtLabels = ['黄浦区', '徐汇区', '长宁区', '静安区', '普陀区', '虹口区', '杨浦区', '闵行区',
     '宝山区', '嘉定区', '浦东新区', '金山区', '松江区', '青浦区', '奉贤区', '崇明区'].map(n => [n, [n]]);
   data.districtLabels.push(['昆山花桥（江苏）', ['花桥镇']]);
@@ -779,7 +789,7 @@
     pvgTotal.filter(p => p[0] > t3Year).map(p => [p[0], p[1] * 0.65]));
   pvg.note += ' T3 启用后本设施保留机场总接驳量的 65%，另 35% 分配给 T3，分配比例为模拟估算。';
   data.facilities.push({ id: 'sh_pvg_t3', n: '浦东机场 T3 航站楼', t: 'air', at: [t3.x, t3.y],
-    fixedSite: true, regionGate: true, noModel: true, r: 3, y0: [2028, 12],
+    terminalIds: ['pvg_t3'], fixedSite: true, regionGate: true, noModel: true, r: 3, y0: [2028, 12],
     pax: pvgTotal.map(p => [p[0], p[1] * 0.35]),
     note: '位于 T1、T2 和 S1/S2 卫星厅南侧，按实际建设轮廓定位。依据预计 2028 年底具备投运条件的计划，在游戏中于 2028 年 12 月启用；承担机场总接驳量的 35%（模拟），不与 T1/T2 重复统计。',
     src: { pos: '位置：实际建设地块', year: '启用：规划情景', sim: true, url: 'https://www.shanghai.gov.cn/nw4411/20261015/854b367701174a589bab06b21ebd529e.html' } });
@@ -808,6 +818,9 @@
     if (landmark && (f.t === 'rail' || f.t === 'air')) landmark.allowMetro = true;
     const layout = verifiedLayouts[f.id];
     if (!layout) {
+      // 地图已有地标与街区，不再在真实设施附近补通用示意贴图。
+      // 保留实测建筑、机场航站楼及明确指定的未来情景建筑。
+      if (f.t !== 'air' && !f.model) f.noModel = true;
       if (f.t === 'industry' && f.polygons?.length) {
         const xs = f.polygons.flatMap(r => r.map(p => p[0])), ys = f.polygons.flatMap(r => r.map(p => p[1]));
         const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -858,7 +871,7 @@
     connection('sh-legoland-link', [2025, 7], [2034, 12], 125000, '金山文旅：乐高乐园和枫泾', '乐高乐园开园后，把园区、金山北站和枫泾古镇接入同一个线网。', [f('legoland', 3), f('jinshan_north', 3), f('fengjing', 3)]),
     connection('sh-eastern-hub', [2027, 7], [2035, 12], 180000, '东方枢纽换乘', '模拟：把上海东站、浦东国际机场和上海中医药大学张江校区接入同一个线网。', [f('east_station', 3), f('pvg_terminal', 4), f('zhangjiang_uni', 3)]),
     connection('sh-baoshan-hub', [2027, 7], [2035, 12], 155000, '宝山枢纽接驳', '模拟：把上海宝山站、顾村公园和宝山万达接入同一个线网。', [f('baoshan_station', 3), f('gucun', 4), f('baoshan_wanda', 3)]),
-    connection('sh-newcity-lingang', [2029, 1], [2038, 12], 190000, '南汇新城：校园、商圈与海昌', '规划情景：连接上海海洋大学、上海海事大学的临港校区、港城新天地和海昌海洋公园，并接入浦东国际机场。', [f('lingang_uni', 2), f('maritime_lingang', 2), f('lingang_gangcheng', 3), f('haichang', 3), f('pvg_terminal', 4)]),
+    connection('sh-newcity-lingang', [2028, 1], [2038, 12], 190000, '南汇新城：校园、商圈与海昌', '规划情景：连接上海海洋大学、上海海事大学的临港校区、港城新天地和海昌海洋公园，并接入浦东国际机场。', [f('lingang_uni', 2), f('maritime_lingang', 2), f('lingang_gangcheng', 3), f('haichang', 3), f('pvg_terminal', 4)]),
     olympicTask(connection('sh-olympic-campus', [olympics.y - 7, 1], [olympics.y - 1, 6], 170000, '吴泾：场馆与大学城', '模拟：吴泾场馆建设期间，先连通交大闵行校区、紫竹科学园区及吴泾奥运村址。', [f('minhang_uni', 3), f('zizhu', 3), f('oly_village', 3)])),
     connection('sh-chongming-airport', [2035, 1], [2041, 12], 260000, '崇明国际机场接入全市线网', '模拟：把崇明国际机场、城桥万达、长兴岛和浦东国际机场接入同一个线网。', [f('chongming_air', 4), f('chongming_wanda', 3), anchorW('长兴岛', 31.3931, 121.7179, 5), f('pvg_terminal', 4)]),
     olympicTask({ id: 'sh-olympic-test', appear: [olympics.y - 1, 7], deadline: [olympics.y, olympics.m], type: 'facShare', fac: 'sh_oly_stadium', basis: 'we', target: 0.25, reward: 170000,
@@ -899,8 +912,14 @@
       W: 512, H: 560, ZONE: 4, START: { y: 1990, m: 1, d: 1, minute: 360 },
       growth: Object.assign({}, CM.CFG.growth, { popCurve: [[1990, 13.6e6], [1995, 14.5e6], [2000, 16.41e6], [2005, 17.78e6], [2010, 23.0192e6],
         [2015, 24.15e6], [2020, 24.8709e6], [2021, 24.8943e6], [2022, 24.7589e6], [2023, 24.8745e6], [2024, 24.8026e6], [2027, 24.9e6],
-        [2030, 26.6e6], [2035, 30.5e6], [2040, 35e6], [2050, 36.6e6], [2080, 38.0e6], [2300, 38.0e6]],
-        histEnd: 2026, metroBoostMax: 0.02, jobsRatio: [[1990, 0.56], [2000, 0.55], [2010, 0.58], [2020, 0.6]] }),
+        [2030, 26.6e6], [2035, 30.5e6], [2050, 37e6]],
+        histEnd: 2026, metroBoostMax: 0.02, jobsRatio: [[1990, 0.56], [2000, 0.55], [2010, 0.58], [2020, 0.6]],
+        stationPopulation: {
+          reachMinutes: 45, railFull: 600, lineBonus: 0.30, railWeight: 1, walkWeight: 0.30,
+          jobsFull: 40000, facilityMid: 100000,
+          radiusM: 2000, decay: 1.5, fieldMax: 3, targetShare: 0.15, vacancyBias: 1.5,
+        },
+      }),
       money: { code: 'CNY', unit: '元', wan: '万元', yi: '亿元', sym: '¥' },
       econBase: 1990,
       // 造价（万元，1990 年价格；估算，参考地铁 1 号线约 16 km、总投资约 54 亿元的量级）：软土地基，越江隧道附加较高

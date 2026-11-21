@@ -164,7 +164,7 @@
 
 
 
-  UI.LAYERS.push({ id: 'dev', group: 'city', name: '城市发展', icon: 'chart', color: '#0f8a5f', desc: '本阶段以来人口、岗位与新开发用地的变化' });
+  UI.LAYERS.push({ id: 'dev', group: 'city', name: '城市发展', icon: 'chart', color: '#0f8a5f', desc: '按时间查看人口、岗位与新用地变化' });
   const chrome = UI.prototype.buildChrome;
   UI.prototype.buildChrome = function () {
     chrome.apply(this, arguments);

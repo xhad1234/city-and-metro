@@ -23,6 +23,54 @@
   };
   const Fac = { TYPES: TYPES };
   CM.Fac = Fac;
+  // External interfaces keep their own portal / feeder rules.
+  Fac.allowsBikeAccess = function (f) { return !!f && !f.ext && ['park', 'library', 'uni'].includes(f.t); };
+
+  // 与底图共用世界坐标与轮廓。未知边界不拿客流半径冒充设施地块。
+  // 返回 MultiPolygon：polygon -> rings（外环、内洞）-> [x,y]。
+  Fac.footprint = function (f, yr) {
+    if (!f || f.ext) return [];
+    if (f.terminalIds) return ((D.airportLayout && D.airportLayout.terminals) || [])
+      .filter(t => f.terminalIds.includes(t.id) && (yr == null || yr >= t.from || t.construction != null && yr >= t.construction))
+      .flatMap(t => t.outlines.map(r => [r]));
+    if (f._footprint) return f._footprint;
+    const name = Fac.shortName(f), geo = CM.Geo, matches = [];
+    // 公园等面状底图已量化，直接复用绘图用的点，避免选中边线产生偏移。
+    for (const feature of geo ? [...(geo.parks || []), ...(geo.reserves || []), ...(geo.woods || [])] : []) {
+      if (feature.name !== f.name && feature.name !== name) continue;
+      const b = feature.bbox;
+      if (f.x < b[0] - 2 || f.x > b[2] + 2 || f.y < b[1] - 2 || f.y > b[3] + 2) continue;
+      let polygon;
+      for (const ring of feature.rings) {
+        const points = []; for (let i = 0; i < ring.p.length; i += 2) points.push([ring.p[i], ring.p[i + 1]]);
+        if (ring.outer || !polygon) { polygon = []; matches.push(polygon); }
+        polygon.push(points);
+      }
+    }
+    if (matches.length) return (f._footprint = matches);
+    if (f.layout && f.layout.area && f.layout.area.length) return (f._footprint = f.layout.area);
+    if (f.polygons && f.polygons.length) return (f._footprint = f.polygons.map(r => [r]));
+    // 原有地标 / 指定场景模型的旋转场地，与地图绘制使用同一尺寸和角度。
+    const lm = f.lmK >= 0 ? D.landmarks[f.lmK] : f.model && { ...f.model, x: f.x, y: f.y };
+    if (!lm) return [];
+    const a = (lm.rot || 0) * Math.PI / 180, ca = Math.cos(a), sa = Math.sin(a), C = CM.CFG.CELL_M;
+    return (f._footprint = [[[[ -1, -1 ], [ 1, -1 ], [ 1, 1 ], [ -1, 1 ]].map(([i, j]) => {
+      const u = i * lm.w / 2 / C, v = j * lm.d / 2 / C;
+      return [lm.x + u * ca - v * sa, lm.y + u * sa + v * ca];
+    })]]);
+  };
+  Fac.contains = function (f, x, y, yr) {
+    const inRing = ring => {
+      let inside = false;
+      for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const [ax, ay] = ring[j], [bx, by] = ring[i];
+        if (U.distToSeg(x, y, ax, ay, bx, by) < 1e-7) return true;
+        if ((ay > y) !== (by > y) && x < ax + (y - ay) * (bx - ax) / (by - ay)) inside = !inside;
+      }
+      return inside;
+    };
+    return Fac.footprint(f, yr).some(p => inRing(p[0]) && !p.slice(1).some(inRing));
+  };
 
   // 地图外设施的接驳点（v2.1，数据中 ext: [方向, 距地图边缘公里数]）：设施本体在地图外，图上标出方向与距离
   const EXT_DIR = { N: [0, -1], S: [0, 1], E: [1, 0], W: [-1, 0], NE: [0.7071, -0.7071], NW: [-0.7071, -0.7071], SE: [0.7071, 0.7071], SW: [-0.7071, 0.7071] };
@@ -127,7 +175,7 @@
         open: null, close: yrOf(s.y1), pause: s.pause ? s.pause.map(yrOf) : null, w: s.w != null ? curve(s.w) : null, pax: s.pax || null, p: s.p || T.p, we: s.we || null, note: s.note || '', src: s.src || null,
         ext: s.ext ? { dir: s.ext[0], km: s.ext[1], v: EXT_DIR[s.ext[0]] || [0, 0], gate: !!s.gate, to: s.to || null, edge: s.extEdge || null, planned: !!s.interfacePlan } : null, rw: s.rw || null, noModel: !!s.noModel,
         regionGate: !!s.regionGate, polygons: s.polygons || null, entrance: s.entrance || null, model: s.model || null, gameYear: !!s.gameYear,
-        leisureMultiplier: s.leisureMultiplier, layout: s.layout || null };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
+        leisureMultiplier: s.leisureMultiplier, layout: s.layout || null, terminalIds: s.terminalIds || null };   // rw：机场自己的跑道（格坐标，v2.2，用于模型选址）
       if (s.lm) {
         const k = lms.findIndex(function (l) { return l.id === s.lm; });
         if (k < 0) return;

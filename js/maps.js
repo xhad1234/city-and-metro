@@ -166,6 +166,8 @@
       const fill = new Uint8Array(W * H).fill(1);
       for (let j = 0; j < oH; j++) { if (prevFill && prevFill.length === oW * oH) fill.set(prevFill.subarray(j * oW, (j + 1) * oW), (j + dy) * W + dx); else fill.fill(0, (j + dy) * W + dx, (j + dy) * W + dx + oW); }
       C.fillNew = U.packTyped(fill, 'u8'); if (!prevFill) C.fillYear = p.clock.y;
+      CM.DevelopmentHistory?.shift(p.populationHistory, dx, dy);
+      CM.DevelopmentHistory?.shift(p.jobsHistory, dx, dy);
       if (!C.regionIds) C.regionIds = spec.oldRegionIds;
       if (!C.landmarkIds) C.landmarkIds = spec.oldLandmarkIds;
       // 坐标平移

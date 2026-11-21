@@ -516,6 +516,26 @@
   }
   CM.Tasks = Tasks;
 
+  // 连接任务的地理范围与任务卡、旧存档迁移共用。距离始终是直线距离。
+  Tasks.connectionAnchors = function (g, anchors) {
+    return (anchors || []).map(a0 => {
+      const a = Array.isArray(a0) ? { ...Tasks.placeOf(a0[0]), name: a0[0], r: a0[1] || 3 } : a0;
+      const metres = a && g?.city?.regionAt?.(a.x, a.y)?.connectRadiusM;
+      return metres > 0 ? { ...a, r: metres / CFG.CELL_M } : a0;
+    });
+  };
+  Tasks.withConnectionRadii = function (task, g) {
+    const connection = t => ['connect', 'budgetConnect', 'direct'].includes(t.type);
+    const applies = connection(task) || task.type === 'combo' && (task.parts || []).some(connection);
+    if (!applies) return task;
+    const anchors = Tasks.connectionAnchors(g, task.anchors);
+    const parts = task.parts?.map(p => Tasks.withConnectionRadii(p, g));
+    if (!anchors.some((a, i) => a.r !== task.anchors[i].r) && !parts?.some((p, i) => p !== task.parts[i])) return task;
+    const updated = { ...task, ...(task.anchors ? { anchors } : {}), ...(parts ? { parts } : {}) };
+    delete updated.progress; delete updated.evaluatedYM;
+    return updated;
+  };
+
   // 网络连通分量（线路 + 站外换乘）
   function stationComponents(C, acc, activeRoutes) {
     const N = C.stations.length, par = new Int32Array(N);
@@ -701,7 +721,7 @@
   // 任务的地点在截止前能不能建站：半径内要有已开放、或截止 12 个月前按参考年份开放的陆地（台北淡水 1997 年才开放，1991 年发布的 4 年期任务完成不了）
   Tasks.anchorsOpenBy = function (g, anchors, dlYm) {
     const c = g.city, lk = c.lockState(), W = c.W, H = c.H;
-    return (anchors || []).every(function (a0) {
+    return Tasks.connectionAnchors(g, anchors).every(function (a0) {
       const a = Array.isArray(a0) ? Tasks.placeOf(a0[0]) : a0, R = (Array.isArray(a0) ? a0[1] : a0 && a0.r) || 3;
       if (!a || !isFinite(a.x)) return true;
       for (let j = Math.max(0, Math.floor(a.y - R)); j <= Math.min(H - 1, Math.floor(a.y + R)); j++) for (let i = Math.max(0, Math.floor(a.x - R)); i <= Math.min(W - 1, Math.floor(a.x + R)); i++) {
@@ -715,9 +735,10 @@
   Tasks.prototype.evaluate = function (t, g, activeRoutes) {
     const C = g.compiled, model = g.model, acc = model.net ? model.net.acc : null;
     if (t.type === 'connect') {
+      const anchors = Tasks.connectionAnchors(g, t.anchors);
       const limited = t.maxTransfers === 1;
       const comp = limited ? oneTransferNetwork(g, activeRoutes) : t.avoid ? componentsAvoiding(C, acc, t.avoid) : stationComponents(C, acc, activeRoutes);
-      const anchorSets = t.anchors.map(function (a) {
+      const anchorSets = anchors.map(function (a) {
         const set = [];
         C.stations.forEach(function (s, i) { if (comp.serviced[i] && U.dist(s.x, s.y, a.x, a.y) <= a.r) set.push(i); });
         return set;
@@ -873,6 +894,8 @@
   };
   // 发布（或接受）时记下基准：预算、物价年份、人口岗位、票价
   Tasks.prepare = function (t, g) {
+    const updated = Tasks.withConnectionRadii(t, g);
+    if (updated !== t) { Object.assign(t, updated); delete t.progress; delete t.evaluatedYM; }
     Tasks.alignFacDeadline(t);
     if (t.type !== 'combo') return t;
     const anchors = t.anchors || [], ready = g.model.trafficReady();
@@ -906,6 +929,7 @@
   };
   // 经过 anchors 各处的路线：优先全部经过，否则取经过最多的；i0、i1 是最靠外两处在路线上的位置
   Tasks.routeThrough = function (g, anchors) {
+    anchors = Tasks.connectionAnchors(g, anchors);
     const C = g.compiled; let best = null, bn = -1;
     for (const r of C.routes) {
       if (r.svc) continue;
@@ -1653,7 +1677,7 @@
     return town ? t.title.replace(/「[^」]+」/, '「' + town.name + '」') : t.title;
   };
   Tasks.prototype.serialize = function () { return { active: this.active, done: this.done, failed: this.failed, issued: this.issued, nextDyn: this.nextDyn, seq: this.seq, cool: this.cool || {}, adjusted:this.adjusted||[], offers: this.offers || [], nextOffer: this.nextOffer || 0, lineHist: this.lineHist || {} }; };
-  Tasks.restore = function (s, clock) {
+  Tasks.restore = function (s, clock, game) {
     const t = new Tasks();
     Object.assign(t, s);
     t.active = t.active.map(active => {
@@ -1674,7 +1698,8 @@
         if (active.type === 'combo') active.parts = active.parts.map(migrateFare);
         else active = migrateFare(active);
       }
-      const template = D.histTasks.find(h => h.id === active.id);
+      const originalTemplate = D.histTasks.find(h => h.id === active.id);
+      const template = originalTemplate && Tasks.withConnectionRadii(originalTemplate, game);
       if (!template) return active;
       const previous = template.previousDeadline;
       const retimed = previous && active.deadline?.[0] === previous[0] && active.deadline[1] === previous[1] &&
@@ -1693,6 +1718,7 @@
         const entry = template.anchors.find(p => p.facilityEntrance && (p.facilityEntrance === a.facilityEntrance || p.name === a.name));
         if (!entry) return a;
         if (entry.x !== a.x || entry.y !== a.y || entry.r !== a.r) {
+          if (entry.r !== a.r) t.connectionRadiusUpdated = true;
           delete task.progress;
           delete task.evaluatedYM;
         }
@@ -1700,6 +1726,12 @@
       });
       return task;
     });
+    t.active = t.active.map(task => {
+      const updated = Tasks.withConnectionRadii(task, game);
+      if (updated !== task) t.connectionRadiusUpdated = true;
+      return updated;
+    });
+    if (t.offers) t.offers = t.offers.map(task => Tasks.withConnectionRadii(task, game));
     return t;
   };
 })(window.CM);
